@@ -1,3 +1,7 @@
+<!-- Once this is pushed, paste the badge in under the title:
+     [![ci](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
+     and replace OWNER/REPO. Also fill in the name in LICENSE. -->
+
 # A traffic signal controller for the Bosch Future Mobility Challenge
 
 The track-side half of the problem. Not the car — the intersection: a state
@@ -6,9 +10,17 @@ watches the lamp outputs and does not trust it, and a broadcast that tells the
 cars what they are looking at and how long they have.
 
 **Status:** controller, monitor and protocol complete and verified in host
-simulation. Board layer written and type-checked against a stubbed HAL;
-hardware has not been built. `docs/bringup-checklist.md` is the order to find
-out in.
+simulation. The board layer is written and now runs on the host against a fake
+HAL; it has never been on hardware. `docs/bringup-checklist.md` is the order to
+find out in.
+
+```bash
+make            # everything: ~36 s, no hardware
+```
+
+> On Windows with MinGW the binary is `mingw32-make` and there is no `make` on
+> PATH — every `make X` below means `mingw32-make X` there. CI runs GNU make on
+> Linux, which is what the instructions assume.
 
 ---
 
@@ -59,7 +71,7 @@ is a number that is right most of the time.
 Each fault injected into the **field readback** — downstream of the state
 machine, so the controller is behaving correctly throughout. `make faults`.
 
-| injected | detected as | time to flash |
+| injected | detected as | time to flashing red |
 |---|---|---|
 | shorted driver, green on a conflicting approach | conflicting greens, groups 0 and 1 | same tick |
 | lamp failed open, head dark | field output does not match command, group 3 | 100 ms, one settling window |
@@ -71,48 +83,62 @@ The heads go safe on the tick the fault is found, not the next one, and the
 fault latches — an intersection that recovers from a conflict on its own will
 show you that conflict again and never tell you it happened.
 
+The same five faults are injected through the **board layer** in
+`tests/test_node.c`, where a jammed output pin has to end with the lamp supply
+relay dropped as well as the pattern flashing.
+
 ### What actuation is worth
 
 Mean delay per car, from joining the queue to crossing the stop line. Twenty
-simulated minutes per case, five seeds, against the same junction running a
-fixed cycle. `make sim`.
+simulated minutes per case, five seeds. `make sim`.
+
+The comparison is against **Webster's 1958 formula**, retimed for each demand
+level — cycle length `C = (1.5L + 5)/(1 − Y)`, split in proportion to each
+stage's flow ratio, with the practical minimum green a traffic engineer would
+apply by hand afterwards. The "naive fixed" column is the single six-second
+green this project started with, kept in because the difference between the
+two columns is the point: measuring against a badly timed baseline is how you
+get an impressive number that means nothing.
 
 **Four-way, demand even on all four approaches**
 
-| cars/min/approach | fixed mean | fixed worst | actuated mean | actuated worst | gain |
+| cars/min | naive fixed | Webster cycle | Webster mean | actuated mean | actuated worst | gain vs Webster |
+|---|---|---|---|---|---|---|
+| 6 | 5.1 s | 19.5 s | 5.1 s | **4.8 s** | 13.7 s | +7% |
+| 12 | 5.7 s | 24.1 s | 6.0 s | **5.5 s** | 18.6 s | +10% |
+| 18 | 8.8 s | 31.5 s | 8.3 s | **6.7 s** | 26.9 s | +20% |
+| 24 | over capacity | 45.6 s | 12.0 s | **9.9 s** | 43.4 s | +18% |
+
+**T junction, main road at 18 cars/min each way**
+
+| stem cars/min | Webster mean | Webster worst | actuated mean | actuated worst | gain vs Webster |
 |---|---|---|---|---|---|
-| 6 | 5.1 s | 15.2 s | **4.8 s** | 13.7 s | +8% |
-| 12 | 5.7 s | 31.0 s | **5.5 s** | 18.6 s | +5% |
-| 18 | 8.8 s | 50.0 s | **6.7 s** | 26.9 s | +25% |
-| 24 | 49.4 s | 160.9 s | **9.9 s** | 43.4 s | +80% — fixed time is over capacity here |
+| 1 | 3.5 s | 20.5 s | **2.7 s** | 17.1 s | +24% |
+| 4 | 4.2 s | 44.9 s | 4.6 s | **18.6 s** | −8% on the mean |
+| 12 | 6.4 s | 33.0 s | **5.5 s** | 21.0 s | +15% |
 
-**T junction, main road at 18/min each way, stem as shown**
-
-| stem cars/min | fixed mean | actuated mean | gain |
-|---|---|---|---|
-| 1 | 5.96 s | **2.69 s** | +55% |
-| 4 | 5.96 s | **4.63 s** | +23% |
-| 12 | 6.43 s | **5.53 s** | +15% |
-
-The even four-way is the case where actuation has least to offer, and the
-numbers say so: at low demand a fixed plan is already nearly right and the gain
-is inside the noise. It pays where the demand is lopsided — the T junction with
-an empty stem — and it pays where a fixed plan runs out of capacity, because
-resting on the busy approach is capacity a fixed cycle cannot reach.
+Against a properly timed fixed plan the gain is 7–24%, not the 80% the naive
+baseline suggested. The row worth reading is the T junction at four cars a
+minute on the stem, where actuation is **8% worse on the mean and 59% better
+on the worst case** — a fixed plan that serves an almost-empty stem every
+cycle has a good average and a long tail, and the tail is what a competition
+run is actually judged on.
 
 ### Verification
 
 | | |
 |---|---|
-| Host assertions | **925,211**, no hardware, ~15 s |
-| Longest continuous run checked tick-by-tick | 40 simulated minutes across four plans |
-| Independent invariants checked every tick | conflicts, pedestrian conflicts, aspect sequence, yellow length, all-red measured from the field, broadcast agreement, starvation |
-| Countdown claim | verified by reading the frame, running a copy of the intersection forward, and comparing against the real change — exact to the tick on fixed plans, never early on actuated ones |
-| Fault classes injected and caught | 5 |
-| Control tick | 100 Hz |
-| Broadcast | 10 Hz per head |
+| Host assertions | **925,389** across seven programs, no hardware, ~36 s |
+| Line coverage, portable core | **92.4%** of 646 lines (`make coverage`) |
+| Longest run checked tick-by-tick | 40 simulated minutes across four plans |
+| Independent invariants, every tick | conflicts, pedestrian conflicts, aspect sequence, yellow length, all-red measured from the field, broadcast agreement, starvation |
+| Countdown claim | verified by reading the frame, running a copy of the intersection forward, and comparing against the real change |
+| Parser | differential-fuzzed against an independently written oracle; 27-case corpus plus a deterministic mutation sweep in `make test`, libFuzzer + ASan + UBSan in CI |
+| Fault classes injected and caught | 5, in the core and again through the board layer |
+| Delay regression guard | `make check` fails if the figures move more than 8% |
+| Warnings | clean under `-Wconversion -Wsign-conversion -Wshadow -Wpedantic -Wcast-qual -Wdouble-promotion` and five more, as errors |
 
-Reproduce with `make`.
+Per-program counts and what each one is for: `docs/testing.md`.
 
 ---
 
@@ -163,8 +189,8 @@ firmware/common/app/     portable C99, no HAL, runs identically on host and targ
   semaphore.c            one unit behind one call
 
 firmware/semaphore_node/ the STM32 layer. Pins, UART, tick. Nothing decides here.
-sim/                     traffic, a clock, and a real UDP socket
-tests/                   five programs, 925k assertions
+sim/                     traffic, a clock, a real UDP socket, Webster's formula
+tests/                   seven programs; fake_hal.c is what lets the board layer run
 tools/hal_stub/          just enough HAL to compile the board layer on a PC
 docs/                    protocol, conflict monitor, hardware, testing, bring-up
 ```
@@ -218,6 +244,21 @@ be braking hard for a pedestrian doll it has just detected.
   processor, which catches a shorted driver and a miswired head but not a LED
   that has failed open. The sense-resistor version is drawn up in
   `docs/hardware.md` and not built.
+- **The proof is bounded, and has not been run here.** `make prove` model-checks
+  the no-conflicting-green invariant with CBMC over *all* call sequences to a
+  depth of about forty ticks, which is deeper than a stage transition and
+  shallower than an hour of operation. CBMC is not installed on the machine this
+  was written on, so that job has only ever run in CI — see below.
+- **`make fuzz`, `make arm` and the sanitizer build have only run in CI.** The
+  development machine is Windows with MinGW: no clang, no libasan, no
+  arm-none-eabi. The replay fuzzer and the CBMC harnesses have concrete builds
+  that do run locally in `make test`, which is what keeps them from rotting, but
+  the first green CI run is the first real evidence for the other three.
+- **No footprint number yet.** `make arm` cross-compiles the core and the board
+  layer and prints `arm-none-eabi-size`, but nobody has run it, so this README
+  does not quote flash or RAM. The same goes for the worst-case tick, which the
+  node measures with DWT and reports on the debug UART and which has no value
+  until it has run on an ARM.
 - **No protected turns.** Turning movements are permissive, the way they are at
   the unsignalised junctions elsewhere on the track. The machinery supports
   splitting an approach into two signal groups with their own conflict rows;
@@ -225,4 +266,5 @@ be braking hard for a pedestrian doll it has just detected.
 - **No coordination between intersections.** Each unit runs its own cycle off
   its own clock, which is the honest thing to build when the units have no
   shared time base. A green wave needs one.
-- **Never powered.** Everything above is simulation and a compiler.
+- **Never powered.** A Blue Pill and twelve LEDs is about ten euros and would
+  end this section; until then everything above is simulation and a compiler.

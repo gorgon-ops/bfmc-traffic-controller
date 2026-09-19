@@ -131,9 +131,19 @@ caution — survivable, but not what the intersection thinks it is showing.
 
 **The host tests pass `NULL` for the readback where they are not injecting.**
 That makes the field comparison compare the command against itself, which is
-vacuous. Every other check still works on those runs, and
-`tests/test_monitor.c` drives the field comparison explicitly with vectors that
-disagree.
+vacuous. Every other check still works on those runs;
+`tests/test_monitor.c` drives the field comparison explicitly with vectors
+that disagree, and `tests/test_node.c` goes further by jamming an actual pin
+in the fake HAL, so the readback the monitor sees is one the firmware tried
+and failed to change.
+
+**The monitor's conflict matrix is copied from the plan at init.** That gives
+it independence from later corruption of one copy, and no independence at all
+from a plan that was wrong to begin with - both copies are then equally wrong.
+On real hardware the second copy should be loaded separately and verified
+separately. What does help here is `make prove`, which model-checks
+`intersection_plan_check()` over an arbitrary matrix rather than over the
+matrices that happen to be in `plans.c`.
 
 ---
 

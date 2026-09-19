@@ -3,10 +3,15 @@
 One intersection unit. Four vehicle heads, two pedestrian heads, four stop-line
 detectors, and a Wi-Fi module that does nothing but put lines onto the network.
 
-**Status: designed and type-checked, not yet built.** `make node` compiles the
-board layer against a stubbed HAL, which catches a misspelled pin or an
-argument in the wrong order and proves nothing whatsoever about whether the
-hardware works. `docs/bringup-checklist.md` is the order to find out in.
+**Status: designed, tested on the host, not yet built.** `make node` compiles
+the board layer against a stubbed HAL and `make test` runs it against a fake
+one - the debounce, the tick ordering, the fault path and the poll scheduling
+all execute at the real tick rate. `make arm` cross-compiles it for the part
+and reports the footprint.
+
+None of that says the hardware works, and one gap is worth naming precisely:
+a fake HAL agrees with a pin map that is wrong in exactly the same way the
+firmware is. Only step 2 of `docs/bringup-checklist.md` settles the wiring.
 
 ---
 
@@ -168,7 +173,7 @@ what the rules are written about.
 |---|---|
 | tick | 100 Hz, TIM2 |
 | tick budget | 10 ms |
-| measured worst tick | not yet measured on hardware — `semaphore_node_worst_us()` reports it on the debug UART |
+| measured worst tick | not yet measured on silicon. `semaphore_node_worst_us()` reports it on the debug UART; the host run reports zero because the fake HAL's cycle counter does not advance, which is honest rather than useful |
 | broadcast | 10 Hz per head, from the main loop |
 | telemetry | 2 Hz, main loop |
 
