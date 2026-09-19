@@ -21,3 +21,8 @@ Release/
 *.launch
 
 __pycache__/
+
+# The write-up this project started as. README.md supersedes it, and a binary
+# Word file in the root of a C repository reads as something nobody cleaned
+# up. Kept on disk, out of the history from here on.
+*.docx

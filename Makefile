@@ -211,6 +211,12 @@ node: $(NODE_SRC) $(NODE_HDR) $(APP_HDR)
 ##
 ## plans.c does not appear: it is a table of static data with no executable
 ## lines in it, which gcov correctly declines to have an opinion about.
+##
+## The test drivers are compiled and linked in two steps rather than one.
+## gcc names the .gcno after the object it is producing, and a compile-and-
+## link has no object to name it after, so it writes into the working
+## directory instead - six pairs of .gcno/.gcda dropped in the project root
+## every time anybody asked for a coverage number.
 COV_TESTS := test_plan test_phases test_monitor test_proto test_integration \
              fuzz_proto
 COV_OBJ   := $(addprefix $(COV)/,$(notdir $(APP_SRC:.c=.o)))
@@ -225,7 +231,9 @@ coverage:
 	done
 	@for t in $(COV_TESTS); do \
 		$(CC) -std=c99 -O0 --coverage -I$(APP) -I$(SIM) -Itests \
-		      tests/$$t.c $(COV_OBJ) -o $(COV)/$$t$(EXE) || exit 1; \
+		      -c tests/$$t.c -o $(COV)/$$t.o || exit 1; \
+		$(CC) -std=c99 -O0 --coverage \
+		      $(COV)/$$t.o $(COV_OBJ) -o $(COV)/$$t$(EXE) || exit 1; \
 	done
 	@for t in $(COV_TESTS); do $(COV)/$$t$(EXE) > /dev/null || exit 1; done
 	@gcov -n -o $(COV) $(APP_SRC) > $(COV)/gcov.txt 2>/dev/null || true
