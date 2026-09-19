@@ -1,0 +1,23 @@
+build/
+*.o
+*.exe
+*.gcda
+*.gcno
+*.gcov
+*.csv
+
+# libFuzzer findings, which should be committed to the corpus deliberately
+# rather than swept in by accident
+crash-*
+leak-*
+timeout-*
+
+# STM32CubeIDE
+Debug/
+Release/
+.settings/
+.cproject
+.project
+*.launch
+
+__pycache__/

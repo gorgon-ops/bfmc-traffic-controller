@@ -1,0 +1,9 @@
+# The repository stores LF. CI builds on Linux, the project is developed on
+# Windows, and a Makefile that arrives with CRLF line endings fails there in
+# a way that takes an hour to diagnose.
+* text=auto eol=lf
+
+# Except the things that are not text.
+*.docx binary
+*.png  binary
+*.pdf  binary

@@ -1,0 +1,110 @@
+name: ci
+
+# Everything in this file runs on a push. The point is that a reviewer can
+# confirm the numbers in the README in three seconds by looking at a badge,
+# rather than taking 925,000 assertions on faith from someone's laptop.
+#
+# The jobs are split so a failure says which claim broke, not just "ci red".
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+
+  # The suite, on two compilers. gcc and clang disagree about enough
+  # warnings that building on both is worth more than it costs.
+  build:
+    name: tests (${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+      - name: compiler version
+        run: ${{ matrix.cc }} --version
+      - name: build and run everything
+        run: make CC=${{ matrix.cc }}
+
+  # The same suite with the sanitizers on. "925k assertions, clean under
+  # ASan and UBSan" is a materially stronger sentence than the count alone.
+  sanitizers:
+    name: asan + ubsan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: tests under asan and ubsan
+        run: make test CC=clang SAN=1
+        env:
+          ASAN_OPTIONS: detect_leaks=1:abort_on_error=1
+          UBSAN_OPTIONS: print_stacktrace=1
+
+  # Coverage-guided fuzzing of the only parser of untrusted input in the
+  # project. The seed corpus is compiled into the target; see
+  # tests/fuzz_proto.c for why it lives there rather than in files.
+  fuzz:
+    name: libfuzzer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fuzz the frame parser
+        run: make fuzz CC=clang FUZZ_SECONDS=120
+      - name: keep any crash it found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: |
+            crash-*
+            leak-*
+            timeout-*
+          if-no-files-found: ignore
+
+  # Line coverage over the portable core, printed into the job log so the
+  # number in the README has somewhere to be checked against.
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make coverage
+
+  # Bounded model checking of the property the whole project exists for.
+  # Slower than the rest; the unwind depth is the honest limit and is
+  # documented in the harness.
+  prove:
+    name: cbmc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install cbmc
+        run: |
+          set -eu
+          VER=5.95.1
+          curl -fsSL -o cbmc.deb \
+            "https://github.com/diffblue/cbmc/releases/download/cbmc-${VER}/ubuntu-22.04-cbmc-${VER}-Linux.deb"
+          sudo apt-get update
+          sudo apt-get install -y ./cbmc.deb
+          cbmc --version
+      - name: prove the conflict invariant
+        run: make prove
+
+  # Cross-compile for the part it is actually going to run on, and publish
+  # the footprint. Host int widths and host ABI are not the target's, so a
+  # clean host build is not evidence the firmware fits.
+  firmware:
+    name: arm build + size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install the arm toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-arm-none-eabi
+          arm-none-eabi-gcc --version
+      - name: cross-compile and report the footprint
+        run: make arm
