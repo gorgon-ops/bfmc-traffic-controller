@@ -1,3 +1,11 @@
+/* Before any include. The project builds with -std=c99, which on glibc means
+ * __STRICT_ANSI__ and no POSIX declarations - so clock_gettime, nanosleep and
+ * the socket calls would all be implicit, and -Werror turns each of those
+ * into a build failure. Windows needs none of this and must not see it. */
+#if !defined(_WIN32)
+#  define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "udp_link.h"
 
 #include <stdio.h>
