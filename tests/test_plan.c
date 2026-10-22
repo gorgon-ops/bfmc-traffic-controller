@@ -1,21 +1,10 @@
-/* test_plan.c - the configuration check.
- *
- * Every other test in this directory drives a plan that is correct. This one
- * drives plans that are not, because the conflict matrix and the stage list
- * are the two things on this project most likely to be edited by somebody in
- * a hurry the night before a run, and a plan that is wrong in the right way
- * produces an intersection that looks perfectly normal until two cars arrive
- * at once.
- *
- * Each case below is a single-character-scale mistake in a plan that is
- * otherwise the real one.
- */
+/* Plans that are wrong in small, realistic ways - the kind of edit made the
+ * night before a run, which looks normal until two cars arrive at once. */
 #include <string.h>
 
 #include "test_util.h"
 #include "plans.h"
 
-/* A writable copy of a plan, tables and all. */
 typedef struct {
     int_plan_t  plan;
     int_stage_t stages[2];
@@ -72,9 +61,8 @@ static void mut_default(mut_plan_t *m)
     m->plan.ped_recall       = 1u;
 }
 
-/* Assert that the plan is rejected, and that it is rejected for the stated
- * reason - a check that fires for the wrong cause is not the check under
- * test. */
+/* Rejected for the stated reason: a check that fires for the wrong cause is
+ * not the check under test. */
 static void reject(const int_plan_t *p, const char *because, const char *what)
 {
     char err[64];
@@ -108,17 +96,13 @@ static void accept(const int_plan_t *p, const char *what)
     }
 }
 
-/* --------------------------------------------------------------------- */
-
 static void test_real_plans_pass(void)
 {
     accept(&plan_cross4,       "plan_cross4");
     accept(&plan_cross4_fixed, "plan_cross4_fixed");
     accept(&plan_tee,          "plan_tee");
 
-    /* The mutable copy is the four-way plan written out by hand. If this ever
-     * fails while plan_cross4 passes, the copy has drifted and every rejection
-     * below is testing something other than what it says. */
+    /* If this fails while plan_cross4 passes, the copy has drifted. */
     {
         mut_plan_t m;
         mut_default(&m);
@@ -131,7 +115,7 @@ static void test_conflicting_greens_in_one_stage(void)
     mut_plan_t m;
 
     mut_default(&m);
-    /* The mistake: the north-south stage also releases the east approach. */
+    /* N-S stage also releases east. */
     m.stages[0].green = N | S | E;
     reject(&m.plan, "conflicting", "a stage greening conflicting approaches");
 }
@@ -141,8 +125,7 @@ static void test_asymmetric_conflict_matrix(void)
     mut_plan_t m;
 
     mut_default(&m);
-    /* The mistake: north is told it conflicts with east, east is not told it
-     * conflicts with north. Half the checks that should fire will not. */
+    /* Asymmetric: north conflicts with east, not the other way. */
     m.conflict[1] = S;
     reject(&m.plan, "asymmetric", "a one-way conflict entry");
 }
@@ -161,8 +144,7 @@ static void test_group_never_served(void)
     mut_plan_t m;
 
     mut_default(&m);
-    /* The mistake: the west approach is dropped from its stage. Its head goes
-     * on showing a perfectly steady red for the rest of the competition. */
+    /* West dropped from its stage: a steady red forever. */
     m.stages[1].green = E;
     reject(&m.plan, "never green", "an approach no stage serves");
 }
@@ -185,9 +167,7 @@ static void test_crossing_outlasts_its_green(void)
     mut_plan_t m;
 
     mut_default(&m);
-    /* The mistake: the walk and its clearance no longer fit inside the green
-     * that serves them, so a pedestrian is still in the road when the
-     * conflicting approach is released. */
+    /* Walk + clearance no longer fit inside the serving green. */
     m.plan.ped_clear_ms = 3000u;
     reject(&m.plan, "outlasts", "a crossing longer than its green");
 }
@@ -197,8 +177,7 @@ static void test_crossing_against_its_own_stage(void)
     mut_plan_t m;
 
     mut_default(&m);
-    /* The mistake: crossing 0 is walked by the stage whose traffic drives
-     * straight through it. */
+    /* Crossing 0 walked by the stage that drives through it. */
     m.stages[1].peds = (1u << 0) | (1u << 1);
     reject(&m.plan, "across", "a crossing walked into its own traffic");
 }
@@ -208,8 +187,7 @@ static void test_unreachable_max_green(void)
     mut_plan_t m;
 
     mut_default(&m);
-    /* The mistake: a maximum green on a stage with no extension. It reads as
-     * an actuated stage and behaves as a fixed one. */
+    /* Reads as actuated, behaves as fixed. */
     m.stages[0].ext_ms = 0u;
     reject(&m.plan, "never reach", "a max green with no extension to reach it");
 }
@@ -243,8 +221,7 @@ static void test_degenerate_plans(void)
     reject(&m.plan, "null table", "a plan with a table left out");
 }
 
-/* A rejected plan must leave the controller somewhere safe, not somewhere
- * undefined. This is the property the node depends on at boot. */
+/* The node depends on this at boot. */
 static void test_rejected_plan_starts_in_flash(void)
 {
     mut_plan_t m;
@@ -260,7 +237,6 @@ static void test_rejected_plan_starts_in_flash(void)
         CHECK_EQ(intersection_aspect(&ix, g), SIG_FLASH_RED);
     }
 
-    /* And it stays there. A bad plan is not something time fixes. */
     intersection_update(&ix, 60000u);
     CHECK_EQ(ix.state, INT_FLASH);
 }

@@ -1,28 +1,18 @@
-/* test_integration.c - the whole unit, watched by something that does not
- * share its opinions.
- *
- * The other test files check parts against their own specifications. This one
- * runs each plan for ten simulated minutes under randomised traffic and
- * checks, on every one of those sixty thousand ticks, properties written out
- * independently of the code that has to satisfy them: its own conflict table,
- * its own idea of what has to follow a green, its own stopwatch on the yellow.
- *
- * It is the test that catches the system whose parts are each individually
- * correct.
- */
+/* Each plan for ten simulated minutes of random traffic, checked every tick
+ * against properties written independently of the code: its own conflict
+ * table, its own sequence rules, its own stopwatch. Catches a system whose
+ * parts are each correct. */
 #include "test_util.h"
 #include "rig.h"
 #include "plans.h"
 
-/* --------------------------------------------------------------------- */
-/* the observer                                                          */
-/* --------------------------------------------------------------------- */
+/* ---- the observer -------------------------------------------------------- */
 
 typedef struct {
     const int_plan_t *plan;
 
-    /* Written out here rather than read from the plan. An observer that
-     * consults the same table the controller used cannot disagree with it. */
+    /* Not read from the plan: an observer using the controller's table cannot
+     * disagree with it. */
     const uint16_t *conflict;
     const uint16_t *ped_conflict;
 
@@ -45,7 +35,6 @@ typedef struct {
 
 static int occupying(sig_aspect_t a)
 {
-    /* Traffic is in the intersection, or entitled to still be. */
     return a == SIG_GREEN || a == SIG_YELLOW;
 }
 
@@ -111,7 +100,6 @@ static void obs_check(obs_t *o, const rig_t *r)
         }
     }
 
-    /* 2. Pedestrians are never in a road that is running. */
     for (p = 0u; p < o->plan->n_peds; p++) {
         ped_aspect_t pa = rig_ped(r, p);
 
@@ -132,7 +120,6 @@ static void obs_check(obs_t *o, const rig_t *r)
         }
     }
 
-    /* 3. The broadcast says what the head is showing. */
     for (g = 0u; g < o->plan->n_groups; g++) {
         sig_aspect_t a = rig_aspect(r, g);
         sem_state_t  s = semaphore_state(&r->sem, g);
@@ -146,7 +133,6 @@ static void obs_check(obs_t *o, const rig_t *r)
         }
     }
 
-    /* 4. Transitions and their durations. */
     for (g = 0u; g < o->plan->n_groups; g++) {
         sig_aspect_t a    = rig_aspect(r, g);
         sig_aspect_t was  = o->prev[g];
@@ -176,9 +162,8 @@ static void obs_check(obs_t *o, const rig_t *r)
                 CHECK_EQ(held, o->plan->pregreen_ms);
             }
 
-            /* The clearance, measured from the field rather than assumed from
-             * the plan: every conflicting approach must have been out of the
-             * intersection for the full all-red. */
+            /* Measured from the field: every conflicting approach out for the full
+             * all-red. */
             for (h = 0u; h < o->plan->n_groups; h++) {
                 if ((o->conflict[g] & (uint16_t)(1u << h)) == 0u) {
                     continue;
@@ -217,11 +202,9 @@ static void obs_check(obs_t *o, const rig_t *r)
     }
 }
 
-/* --------------------------------------------------------------------- */
-/* the runs                                                              */
-/* --------------------------------------------------------------------- */
+/* ---- the runs ------------------------------------------------------------ */
 
-#define RUN_MS 600000u          /* ten minutes of track time, per plan */
+#define RUN_MS 600000u
 
 static uint32_t lcg(uint32_t *seed)
 {
@@ -270,14 +253,12 @@ static void run_plan(const int_plan_t *plan, const uint16_t *conflict,
     }
     printf(" ms\n");
 
-    /* The monitor stayed quiet, and the machine is still running the plan
-     * rather than sitting in a flash nobody noticed. */
+    /* And still running the plan, not sitting in an unnoticed flash. */
     CHECK_EQ(r.fault, MON_OK);
     CHECK_EQ(t, RUN_MS);
     CHECK(rig_state(&r) != INT_FLASH);
 
-    /* Every approach was served, repeatedly, and none of them ever waited
-     * longer than two full cycles at the maximum green. */
+    /* None waited longer than two full cycles at maximum green. */
     for (g = 0u; g < plan->n_groups; g++) {
         uint32_t bound = 2u * (uint32_t)plan->n_stages
                        * ((uint32_t)o.max_green_of[g] + plan->yellow_ms
@@ -291,15 +272,13 @@ static void run_plan(const int_plan_t *plan, const uint16_t *conflict,
     }
 }
 
-/* Independent copies of the conflict tables. If one of these is edited to
- * agree with a change in plans.c without the change being right, the test
- * stops meaning anything - which is why they are written as the geometry
- * rather than copied as bit patterns. */
+/* Written as geometry rather than copied bit patterns, so they cannot just be
+ * edited to agree with plans.c. */
 static const uint16_t x4_conflict[4] = {
-    (1u << 1) | (1u << 3),      /* north: the east and west approaches */
-    (1u << 0) | (1u << 2),      /* east:  the north and south approaches */
-    (1u << 1) | (1u << 3),      /* south */
-    (1u << 0) | (1u << 2)       /* west */
+    (1u << 1) | (1u << 3),      /* north: east and west */
+    (1u << 0) | (1u << 2),
+    (1u << 1) | (1u << 3),
+    (1u << 0) | (1u << 2)
 };
 static const uint16_t x4_ped_conflict[2] = {
     (1u << 1) | (1u << 3),
@@ -307,8 +286,8 @@ static const uint16_t x4_ped_conflict[2] = {
 };
 
 static const uint16_t tee_conflict[3] = {
-    (1u << 2),                  /* east: the stem */
-    (1u << 2),                  /* west: the stem */
+    (1u << 2),
+    (1u << 2),
     (1u << 0) | (1u << 1)       /* stem: both directions of the main road */
 };
 static const uint16_t tee_ped_conflict[1] = { (1u << 2) };
@@ -317,20 +296,18 @@ int main(void)
 {
     printf("integration: ten minutes per plan\n");
 
-    /* Busy: the actuated plan spends most of its time at the maximum green. */
+    /* Busy: mostly at maximum green. */
     run_plan(&plan_cross4, x4_conflict, x4_ped_conflict, 1, 40u,
              "cross4 busy");
 
-    /* Quiet: mostly minimum greens, and the gaps between them are where a
-     * controller that mishandles an empty approach goes wrong. */
+    /* Quiet: mostly minimum greens, with gaps that expose empty-approach bugs. */
     run_plan(&plan_cross4, x4_conflict, x4_ped_conflict, 1, 2u,
              "cross4 quiet");
 
     run_plan(&plan_cross4_fixed, x4_conflict, x4_ped_conflict, 1, 20u,
              "cross4 fixed");
 
-    /* The T junction rests in green on the main road, so its green is allowed
-     * to run past the stage maximum - that is the resting, not a runaway. */
+    /* Resting in green may run past the stage maximum; that is not a runaway. */
     run_plan(&plan_tee, tee_conflict, tee_ped_conflict, 0, 10u,
              "tee");
 

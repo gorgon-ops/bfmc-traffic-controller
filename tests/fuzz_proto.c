@@ -1,58 +1,27 @@
-/* fuzz_proto.c - the one parser of untrusted input, fed garbage.
- *
- * Everything else in this project consumes structures the firmware built
- * itself. sem_proto_decode() consumes whatever arrived on a broadcast socket,
- * which is to say anything at all, from anyone on the network, including a
- * team debugging their own semaphore on the same SSID. It is hand-rolled, it
- * is about a hundred lines, and it had an integer overflow in it that let
- * "state":4294967298 decode as a green. That is the argument for this file.
- *
- * Two ways to build it:
+/* sem_proto_decode() is the only parser of untrusted input, and it once let
+ * "state":4294967298 decode as green.
  *
  *   libFuzzer   clang -fsanitize=fuzzer,address,undefined -DFUZZING_BUILD
- *               Coverage-guided. This is the one that finds new things, and
- *               it runs in CI.
- *
- *   replay      any C99 compiler, no flags needed. Replays the checked-in
- *               corpus and then runs a deterministic mutation sweep over it.
- *               This is the one that runs in "make test" on a machine with
- *               no clang, so the corpus is a regression suite even where the
- *               fuzzer cannot be built.
- *
- * The properties checked on every input are below in fuzz_one(). They are the
- * same in both builds - the difference is only where the inputs come from.
- */
+ *               coverage-guided, runs in CI
+ *   replay      any C99 compiler: replays the corpus and a deterministic
+ *               mutation sweep, so "make test" covers it without clang */
 #include <stdint.h>
 #include <stddef.h>
 #include <string.h>
 
 #include "sem_proto.h"
 
-/* Bigger than any real frame, so the fuzzer spends its time on the parser
- * rather than on multi-kilobyte inputs the socket layer would never hand it. */
+/* Bigger than any real frame. */
 #define FUZZ_MAX_INPUT 4096
 
 static void fuzz_fail(const char *what);
 
-/* ------------------------------------------------------------------ */
-/* the oracle                                                         */
-/* ------------------------------------------------------------------ */
+/* ---- the oracle ---------------------------------------------------------- */
 
-/* An independently written reader of the same format, here only to disagree
- * with the one under test.
- *
- * The self-consistency properties below turn out not to be enough on their
- * own, and finding that out is worth more than the properties were. The
- * overflow this file was written for made "id":4294967297 decode as id 1 -
- * and id 1 is a perfectly well-formed frame. It round-trips, it re-encodes,
- * every field is in range. Nothing about the output is wrong; what is wrong
- * is that the output exists at all, for an input that should have been
- * refused. A parser bug of the shape "accepts what it should reject" is
- * invisible to any property that only inspects the result.
- *
- * So this reads the digits with the standard library doing the arithmetic in
- * 64 bits, where a value too large for the field is still visibly too large,
- * and the harness compares verdicts rather than outputs. */
+/* An independent reader, here to disagree with the one under test. The
+ * overflow made "id":4294967297 decode as id 1 - a perfectly valid frame, so
+ * no property of the output can catch it. This reads in 64 bits and the
+ * harness compares verdicts. */
 typedef enum { REF_ABSENT, REF_OK, REF_BAD } ref_t;
 
 static ref_t ref_find(const uint8_t *d, size_t n, const char *key,
@@ -96,7 +65,7 @@ static ref_t ref_find(const uint8_t *d, size_t n, const char *key,
             if (!over) {
                 v = v * 10ULL + (unsigned long long)(d[j] - '0');
                 if (v > 0xFFFFFFFFULL) {
-                    over = 1;    /* stop accumulating; 64 bits is not the point */
+                    over = 1;
                 }
             }
             j++;
@@ -105,7 +74,7 @@ static ref_t ref_find(const uint8_t *d, size_t n, const char *key,
             return REF_BAD;      /* the key is here, the number is not */
         }
         if (over) {
-            return REF_BAD;      /* too big for the field it is going into */
+            return REF_BAD;      /* too big for the field */
         }
         *out = v;
         return REF_OK;
@@ -113,8 +82,7 @@ static ref_t ref_find(const uint8_t *d, size_t n, const char *key,
     return REF_ABSENT;
 }
 
-/* Returns non-zero if a property was violated. In the libFuzzer build
- * fuzz_fail() aborts; in the replay build it records and prints. */
+/* fuzz_fail() aborts under libFuzzer and records under replay. */
 static int fuzz_one(const uint8_t *data, size_t size)
 {
     sem_frame_t f;
@@ -130,7 +98,6 @@ static int fuzz_one(const uint8_t *data, size_t size)
         return 0;
     }
 
-    /* --- what the oracle says --- */
     a_id    = ref_find(data, size, "id",     &r_id);
     a_state = ref_find(data, size, "state",  &r_state);
     a_ttc   = ref_find(data, size, "ttc_ms", &r_ttc);
@@ -145,8 +112,7 @@ static int fuzz_one(const uint8_t *data, size_t size)
     memset(&f, 0, sizeof(f));
     accepted = sem_proto_decode((const char *)data, (int)size, &f);
 
-    /* 0. The verdicts have to match. This is the property that catches a
-     *    parser accepting something it should not. */
+    /* 0. Verdicts match: catches accepting what should be refused. */
     if (accepted != ref_accepts) {
         fuzz_fail(accepted ? "decoder accepted what the oracle rejects"
                            : "decoder rejected what the oracle accepts");
@@ -156,7 +122,6 @@ static int fuzz_one(const uint8_t *data, size_t size)
         return 0;
     }
 
-    /* 0b. And so do the values. */
     if ((unsigned long long)f.id != r_id ||
         (unsigned long long)f.state != r_state ||
         (unsigned long long)f.ttc_ms != (a_ttc == REF_OK ? r_ttc : 0ULL) ||
@@ -166,9 +131,7 @@ static int fuzz_one(const uint8_t *data, size_t size)
         return 1;
     }
 
-    /* 1. A successful decode has to mean the fields are in range. This is the
-     *    property the overflow broke: the guard ran on a wrapped value, so it
-     *    passed while the number on the wire was nothing like it. */
+    /* 1. Decoded fields are in range. */
     if (f.state > SEM_GREEN) {
         fuzz_fail("decoded a state outside 0..2");
         return 1;
@@ -178,17 +141,14 @@ static int fuzz_one(const uint8_t *data, size_t size)
         return 1;
     }
 
-    /* 2. Anything that decodes must re-encode. The encoder refuses to write a
-     *    frame that would not fit, so this also pins the claim in sem_proto.h
-     *    that SEM_PROTO_MAX_FRAME is big enough for every field at maximum. */
+    /* 2. Anything that decodes re-encodes, which also pins SEM_PROTO_MAX_FRAME. */
     n = sem_proto_encode(buf, (int)sizeof(buf), &f);
     if (n <= 0) {
         fuzz_fail("a frame that decoded would not re-encode");
         return 1;
     }
 
-    /* 3. And the round trip is a fixed point. If decode and encode disagree
-     *    about what a frame means, one of them is lying to a car. */
+    /* 3. The round trip is a fixed point. */
     memset(&g, 0, sizeof(g));
     if (!sem_proto_decode(buf, n, &g)) {
         fuzz_fail("our own encoder produced something we cannot decode");
@@ -203,9 +163,7 @@ static int fuzz_one(const uint8_t *data, size_t size)
     return 0;
 }
 
-/* ------------------------------------------------------------------ */
-/* libFuzzer entry point                                              */
-/* ------------------------------------------------------------------ */
+/* ---- libFuzzer entry point ----------------------------------------------- */
 
 #ifdef FUZZING_BUILD
 
@@ -228,9 +186,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 
 #else
 
-/* ------------------------------------------------------------------ */
-/* replay driver - no clang required                                  */
-/* ------------------------------------------------------------------ */
+/* ---- replay driver - no clang required ----------------------------------- */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -243,12 +199,8 @@ static void fuzz_fail(const char *what)
     printf("FAIL  %s\n", what);
 }
 
-/* The corpus, inline rather than as files. A seed corpus that lives in the
- * repository as twenty three-line text files is a seed corpus nobody reads;
- * these are also the regression cases, so they belong where someone editing
- * the parser will see them. scripts write them out to disk for libFuzzer. */
+/* Inline, so whoever edits the parser sees the regression cases. */
 static const char *const seeds[] = {
-    /* --- valid --- */
     "{\"id\":1,\"state\":0,\"ttc_ms\":4790,\"exact\":1}",
     "{\"id\":3,\"state\":2,\"ttc_ms\":4200,\"exact\":0}",
     "{\"id\":255,\"state\":2,\"ttc_ms\":4294967295,\"exact\":1,\"fault\":1}",
@@ -256,14 +208,13 @@ static const char *const seeds[] = {
     "{ \"id\" : 7 , \"state\" : 1 }",
     "{\"id\":7,\"state\":1,\"someoneelses\":42}",
 
-    /* --- the overflow family, which is why this file exists --- */
+    /* --- the overflow family --- */
     "{\"id\":4294967297,\"state\":2}",
     "{\"id\":3,\"state\":4294967298}",
     "{\"id\":3,\"state\":2,\"ttc_ms\":99999999999999999}",
     "{\"id\":3,\"state\":2,\"ttc_ms\":4294967296}",
     "{\"id\":99999999999999999999999999,\"state\":0}",
 
-    /* --- malformed --- */
     "{\"id\":2,\"state\":}",
     "{\"id\":2,\"state\":9}",
     "{\"state\":2}",
@@ -290,10 +241,8 @@ static uint32_t rnd(uint32_t *s)
     return *s >> 8;
 }
 
-/* A deliberately dumb mutator. It is not trying to be libFuzzer - it has no
- * coverage feedback and will not find a deep path. What it does do is run
- * everywhere, every time, with a fixed seed, so a byte pattern that once
- * crashed the parser cannot come back unnoticed on a machine with no clang. */
+/* Dumb, fixed-seed and everywhere: a byte pattern that once broke the parser
+ * cannot come back unnoticed on a machine with no clang. */
 static size_t mutate(uint32_t *s, const char *seed, uint8_t *out, size_t cap)
 {
     size_t len = strlen(seed);
@@ -310,26 +259,26 @@ static size_t mutate(uint32_t *s, const char *seed, uint8_t *out, size_t cap)
         size_t at = len ? (size_t)(rnd(s) % (uint32_t)len) : 0u;
 
         switch (op) {
-        case 0:                                  /* flip a byte */
+        case 0:
             if (len) { out[at] ^= (uint8_t)(1u << (rnd(s) % 8u)); }
             break;
-        case 1:                                  /* substitute a digit */
+        case 1:
             if (len) { out[at] = (uint8_t)('0' + (rnd(s) % 10u)); }
             break;
-        case 2:                                  /* insert */
+        case 2:
             if (len < cap) {
                 memmove(out + at + 1, out + at, len - at);
                 out[at] = (uint8_t)(rnd(s) % 256u);
                 len++;
             }
             break;
-        case 3:                                  /* delete */
+        case 3:
             if (len) {
                 memmove(out + at, out + at + 1, len - at - 1);
                 len--;
             }
             break;
-        default:                                 /* truncate */
+        default:
             len = at;
             break;
         }
@@ -349,12 +298,11 @@ int main(int argc, char **argv)
         iterations = strtol(argv[1], 0, 10);
     }
 
-    /* Every seed, unmutated, first. These are the regression cases. */
+    /* Seeds unmutated first: the regression cases. */
     for (i = 0; i < N_SEEDS; i++) {
         (void)fuzz_one((const uint8_t *)seeds[i], strlen(seeds[i]));
     }
 
-    /* Then the sweep. */
     for (n = 0; n < iterations; n++) {
         const char *seed = seeds[rnd(&s) % (uint32_t)N_SEEDS];
         size_t len = mutate(&s, seed, buf, sizeof(buf));
@@ -366,4 +314,4 @@ int main(int argc, char **argv)
     return g_violations == 0 ? 0 : 1;
 }
 
-#endif /* FUZZING_BUILD */
+#endif

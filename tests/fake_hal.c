@@ -2,8 +2,7 @@
 
 #include <string.h>
 
-/* The GPIOA/B/C macros in the stub are address constants, the same shape the
- * real HAL uses. Nothing here dereferences them - they are only identity. */
+/* The stub's GPIO macros are address constants, used only as identity. */
 #define N_PORTS 3
 #define N_PINS  16
 
@@ -24,16 +23,12 @@ typedef struct {
 
 static uart_log_t uart_log[2];
 
-/* The board layer names its UARTs through board_config.h, which resolves them
- * to &huart1 and &huart2. Those have to exist for the link to succeed; they
- * are never read. */
+/* Must exist for the link; never read. */
 TIM_HandleTypeDef  htim2;
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart2;
 
-/* The cycle counter and its enable register. The board layer writes both at
- * init and reads CYCCNT twice a tick; a counter that never advances just
- * reports a worst tick of zero, which is honest for a host run. */
+/* Never advances, so the worst tick reads zero - honest for a host run. */
 static CoreDebug_Type coredebug_storage;
 static DWT_Type       dwt_storage;
 
@@ -59,7 +54,7 @@ static int pin_index(uint16_t pin)
             return i;
         }
     }
-    return -1;                      /* not a single pin */
+    return -1;
 }
 
 static uart_log_t *log_for(UART_HandleTypeDef *h)
@@ -80,9 +75,7 @@ static uart_log_t *log_for(UART_HandleTypeDef *h)
     return &uart_log[0];
 }
 
-/* ------------------------------------------------------------------ */
-/* the HAL the board layer calls                                      */
-/* ------------------------------------------------------------------ */
+/* ---- the HAL the board layer calls --------------------------------------- */
 
 GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef *port, uint16_t pin)
 {
@@ -104,9 +97,7 @@ void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state)
         return;
     }
     if (pin_jammed[p][b] >= 0) {
-        /* A shorted driver. The write is accepted and goes nowhere, which is
-         * precisely the failure the conflict monitor's field readback exists
-         * to notice. */
+        /* A shorted driver: the write goes nowhere. */
         return;
     }
     pin_level[p][b] = (uint8_t)(state == GPIO_PIN_SET ? 1 : 0);
@@ -145,9 +136,7 @@ HAL_StatusTypeDef HAL_UART_Transmit_IT(UART_HandleTypeDef *h, uint8_t *data,
 void __disable_irq(void) { irq_depth++; }
 void __enable_irq(void)  { irq_depth--; }
 
-/* ------------------------------------------------------------------ */
-/* what the tests drive                                               */
-/* ------------------------------------------------------------------ */
+/* ---- what the tests drive ------------------------------------------------ */
 
 void fake_hal_reset(void)
 {

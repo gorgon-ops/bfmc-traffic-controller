@@ -1,20 +1,6 @@
-/* stm32f1xx_hal.h - just enough HAL to type-check the board layer on a PC.
- *
- * firmware/semaphore_node/ is the one part of this project that cannot be run
- * on the host, and code that is never compiled anywhere is code that is wrong
- * in ways nobody has found yet. A misspelled pin, an argument in the wrong
- * order, a call that drifted out of sync with a header - none of that needs a
- * board to catch, and none of it should be waiting inside CubeIDE for the
- * first person who opens it.
- *
- * So "make node" compiles the board layer against this file. It declares the
- * handful of HAL names the node touches and defines none of them: the target
- * is -c, not a link, and a stub that behaved would only invite somebody to
- * trust the result. This proves the board layer compiles and nothing else. It
- * is not a simulator, the pin numbers here are not checked against the part,
- * and a clean "make node" says nothing whatsoever about whether the hardware
- * works.
- */
+/* Just enough HAL for "make node" to type-check the board layer on a PC.
+ * Declarations only, compiled with -c: it proves the board layer compiles and
+ * nothing about whether the hardware works. */
 #ifndef STM32F1XX_HAL_STUB_H
 #define STM32F1XX_HAL_STUB_H
 
@@ -27,9 +13,7 @@ typedef struct { uint32_t dummy; } GPIO_TypeDef;
 typedef struct { uint32_t dummy; } TIM_HandleTypeDef;
 typedef struct { uint32_t dummy; } UART_HandleTypeDef;
 
-/* Address constants, not variables, because that is what the real HAL does -
- * and the difference shows up as a static initialiser that will not compile.
- * These addresses are the F1 ones and are never dereferenced here. */
+/* Constants, not variables, as in the real HAL - or static initialisers break. */
 #define GPIOA ((GPIO_TypeDef *)0x40010800u)
 #define GPIOB ((GPIO_TypeDef *)0x40010C00u)
 #define GPIOC ((GPIO_TypeDef *)0x40011000u)
@@ -59,7 +43,6 @@ HAL_StatusTypeDef HAL_UART_Transmit_IT(UART_HandleTypeDef *h, uint8_t *data,
 
 uint32_t HAL_GetTick(void);
 
-/* The cycle counter, for the tick timing diagnostic. */
 typedef struct { uint32_t DEMCR; } CoreDebug_Type;
 typedef struct { uint32_t CTRL; uint32_t CYCCNT; } DWT_Type;
 
@@ -72,4 +55,4 @@ extern DWT_Type       *DWT;
 void __disable_irq(void);
 void __enable_irq(void);
 
-#endif /* STM32F1XX_HAL_STUB_H */
+#endif

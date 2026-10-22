@@ -1,7 +1,5 @@
-/* Before any include. The project builds with -std=c99, which on glibc means
- * __STRICT_ANSI__ and no POSIX declarations - so clock_gettime, nanosleep and
- * the socket calls would all be implicit, and -Werror turns each of those
- * into a build failure. Windows needs none of this and must not see it. */
+/* Before any include: -std=c99 on glibc hides the POSIX declarations, and
+ * -Werror makes the implicit calls fail. Not for Windows. */
 #if !defined(_WIN32)
 #  define _POSIX_C_SOURCE 200809L
 #endif
@@ -18,9 +16,7 @@
    typedef int socklen_t;
 #  define SOCK_ERR     (int)WSAGetLastError()
 #  define CLOSESOCK(s) closesocket((SOCKET)(s))
-/* Win32 sockets are an unsigned handle, POSIX ones a signed fd. udp_link_t
- * widens both to long long so the header stays free of platform includes;
- * this is where it narrows back to whatever the local API actually takes. */
+/* udp_link_t widens the handle to long long; narrow it back here. */
 #  define SOCK_ARG(fd) ((SOCKET)(fd))
 #else
 #  include <sys/socket.h>

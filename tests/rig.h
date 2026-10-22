@@ -1,14 +1,6 @@
-/** A semaphore on a bench clock.
- *
- * The tests drive the real semaphore_update() at a fixed tick, the same way
- * the node does, and read back the same outputs the node writes. Nothing here
- * reaches inside the state machine to move it along - a test that sets the
- * state it wants to check is a test that proves the state machine can be
- * assigned to.
- *
- * 10 ms is the tick, so every duration below is measured to within one tick
- * and the tests say so rather than pretending to millisecond precision.
- */
+/* Drives the real semaphore_update() at the node's 10 ms tick. Nothing reaches
+ * inside the state machine: a test that sets the state it checks only proves
+ * the state can be assigned to. */
 #ifndef RIG_H
 #define RIG_H
 
@@ -22,8 +14,7 @@ typedef struct {
     mon_fault_t fault;
     int         plan_ok;
 
-    /* When non-NULL, what the monitor is shown instead of the commanded bulb
-     * vector - the fault-injection path. */
+    /* Shown to the monitor instead of the commanded bulbs, for fault injection. */
     const uint8_t *readback;
 } rig_t;
 
@@ -65,9 +56,8 @@ static inline ped_aspect_t rig_ped(const rig_t *r, uint8_t p)
     return r->sem.ped_aspect[p];
 }
 
-/** Advance until group g shows aspect a. Returns the milliseconds it took, or
- *  limit_ms if it never did - the caller checks, so a timeout reads as a wrong
- *  duration rather than as a hang. */
+/* Returns limit_ms if it never arrives, so a timeout reads as a wrong
+ * duration rather than a hang. */
 static inline uint32_t rig_until_aspect(rig_t *r, uint8_t g, sig_aspect_t a,
                                         uint32_t limit_ms)
 {
@@ -83,8 +73,6 @@ static inline uint32_t rig_until_aspect(rig_t *r, uint8_t g, sig_aspect_t a,
     return limit_ms;
 }
 
-/** Advance while group g still shows aspect a, and return how long that was.
- *  Requires that it is showing it now. */
 static inline uint32_t rig_hold_aspect(rig_t *r, uint8_t g, sig_aspect_t a,
                                        uint32_t limit_ms)
 {
@@ -97,8 +85,6 @@ static inline uint32_t rig_hold_aspect(rig_t *r, uint8_t g, sig_aspect_t a,
     return t;
 }
 
-/** How long group g spends showing aspect a, from wherever it is now:
- *  the wait for it plus the length of it. */
 static inline uint32_t rig_measure_aspect(rig_t *r, uint8_t g, sig_aspect_t a,
                                           uint32_t limit_ms)
 {
@@ -106,11 +92,9 @@ static inline uint32_t rig_measure_aspect(rig_t *r, uint8_t g, sig_aspect_t a,
     return rig_hold_aspect(r, g, a, limit_ms);
 }
 
-/** Advance until group g shows green, so a test can start from a known point
- *  without reaching into the state machine to put it there. */
 static inline void rig_to_green(rig_t *r, uint8_t g)
 {
     rig_until_aspect(r, g, SIG_GREEN, 120000u);
 }
 
-#endif /* RIG_H */
+#endif

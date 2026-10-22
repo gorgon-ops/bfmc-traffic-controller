@@ -36,9 +36,8 @@ int semaphore_init(semaphore_t *s, const int_plan_t *plan, char *err, int cap)
     s->plan_ok = (uint8_t)intersection_plan_check(plan, err, cap);
     intersection_init(&s->ix, plan);
 
-    /* The monitor is configured from its own snapshot even when the plan was
-     * rejected: a unit sitting in flash is still a unit whose lamps someone
-     * should be checking. */
+    /* Configured even when the plan was rejected: a unit in flash still has lamps
+     * someone should be checking. */
     for (i = 0u; i < SEM_MAX_GROUPS && i < plan->n_groups; i++) {
         mc.conflict[i] = plan->conflict[i];
     }
@@ -73,11 +72,8 @@ mon_fault_t semaphore_update(semaphore_t *s, uint32_t dt_ms, uint32_t now_ms,
                                 readback != 0 ? readback : s->bits);
 
     if (f != MON_OK && s->ix.state != INT_FLASH) {
-        /* Straight to flash, no clearance sequence. The intersection is
-         * already showing something it should not be; three more seconds of
-         * it while the yellow runs is three seconds too many. This is the one
-         * place a green is allowed to become a flashing red without a yellow
-         * in between, and it is deliberate. */
+        /* Straight to flash with no yellow, deliberately: the field is already
+         * showing something it should not. */
         intersection_fault(&s->ix);
         resolve_outputs(s);
     }

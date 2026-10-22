@@ -1,7 +1,3 @@
-<!-- Once this is pushed, paste the badge in under the title:
-     [![ci](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
-     and replace OWNER/REPO. Also fill in the name in LICENSE. -->
-
 # A traffic signal controller for the Bosch Future Mobility Challenge
 
 The track-side half of the problem. Not the car — the intersection: a state

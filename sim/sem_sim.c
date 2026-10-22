@@ -1,14 +1,10 @@
-/* sem_sim.c - the semaphore on a desk.
- *
- *   sem_sim                  what actuation is worth, against the fixed plan
+/*   sem_sim                  what actuation is worth, against the fixed plan
  *   sem_sim --timeline       every indication change, with the frames
  *   sem_sim --fault=KIND     break the field output and watch the monitor
  *   sem_sim --csv            per-tick state, for plotting
  *   sem_sim --broadcast      real time, real UDP, for developing the car side
  *
- * The controller here is the controller. sim/ contributes the traffic and the
- * clock and nothing else: every aspect printed below came out of the same
- * intersection_update() that will run on the node.
+ * The controller here is the real one; sim/ only supplies traffic and a clock.
  */
 #include <stdio.h>
 #include <string.h>
@@ -21,12 +17,9 @@
 
 #define TICK_MS 10u
 
-/* ------------------------------------------------------------------------ */
-/* shared plumbing                                                          */
-/* ------------------------------------------------------------------------ */
+/* ---- shared plumbing ----------------------------------------------------- */
 
-/* What a head is showing, in two characters, so a whole intersection fits in
- * a column. */
+/* Two characters, so a whole intersection fits in a column. */
 static const char *ab(sig_aspect_t a)
 {
     switch (a) {
@@ -52,9 +45,8 @@ static char pab(ped_aspect_t a)
     return '?';
 }
 
-/* The field readback the node would hand the monitor: what was on the wires
- * when this tick started, which is what was commanded at the end of the last
- * one. See MON_FIELD_GRACE_MS for why that lag is not a fault. */
+/* What was on the wires when this tick started, i.e. last tick's command.
+ * See MON_FIELD_GRACE_MS. */
 static void snapshot(const semaphore_t *s, uint8_t *out)
 {
     uint8_t g;
@@ -64,9 +56,7 @@ static void snapshot(const semaphore_t *s, uint8_t *out)
     }
 }
 
-/* ------------------------------------------------------------------------ */
-/* what actuation is worth                                                  */
-/* ------------------------------------------------------------------------ */
+/* ---- what actuation is worth --------------------------------------------- */
 
 typedef struct {
     uint32_t mean_ms;
@@ -77,36 +67,18 @@ typedef struct {
     int      monitor_ok;
 } result_t;
 
-/* ------------------------------------------------------------------------ */
-/* the fixed-time baseline, timed properly                                  */
-/* ------------------------------------------------------------------------ */
+/* ---- the fixed-time baseline --------------------------------------------- */
 
-/* Actuation has to be measured against a fixed plan somebody competent would
- * have installed, not against the first number that looked reasonable.
- *
- * The first version of this file used one six-second green at every demand
- * level. That is a defensible plan at twelve cars a minute and an
- * indefensible one at twenty-four, where the junction is simply under
- * capacity - so the headline figure was measuring "actuated beats a
- * mistimed fixed plan", which is not a claim worth making.
- *
- * Webster (1958) is the standard answer. The cycle that minimises delay is
+/* The baseline is a properly timed fixed plan, not one green for all demand
+ * levels (which only showed that actuation beats a mistimed plan). Webster's
+ * delay-minimising cycle:
  *
  *              1.5 L + 5
  *      C  =  -------------
  *                1 - Y
  *
- * with L the lost time per cycle and Y the sum over critical movements of
- * the flow-to-saturation ratio, and the available green split between the
- * stages in proportion to their y. Every term is known exactly here, because
- * the plant is sim/city.c and its saturation flow is one car per headway.
- *
- * The additive 5 is an empirical constant fitted to full-size junctions and
- * is left at 5 rather than scaled with the rest of the track. Scaling it is
- * defensible and makes the baseline slightly better at low demand; leaving
- * it alone means the formula is the published one, and the constant is
- * dominated by the 1.5 L term at every demand level that matters here.
- */
+ * L is lost time per cycle, Y the sum of critical flow ratios; green is split
+ * in proportion to y. The constant 5 is left unscaled, as published. */
 typedef struct {
     int_plan_t  plan;
     int_stage_t stages[8];
@@ -116,8 +88,7 @@ typedef struct {
 static double stage_flow_per_min(const int_plan_t *p, uint8_t s,
                                  const uint32_t *rates)
 {
-    /* The critical movement of a stage is its busiest approach: the stage has
-     * to be long enough for that one, and the others get the same green. */
+    /* The critical movement of a stage is its busiest approach. */
     double worst = 0.0;
     uint8_t g;
 
@@ -131,9 +102,7 @@ static double stage_flow_per_min(const int_plan_t *p, uint8_t s,
     return worst;
 }
 
-/* Builds a fixed-time version of `base`, retimed for this demand. Returns 0
- * if the result would not be a legal plan, which at these arrival rates means
- * the junction is over capacity however it is timed. */
+/* Returns 0 when no legal plan exists, i.e. the junction is over capacity. */
 static int webster_retime(webster_t *w, const int_plan_t *base,
                           const uint32_t *rates, uint32_t headway_ms,
                           uint32_t startup_lost_ms)
@@ -153,17 +122,14 @@ static int webster_retime(webster_t *w, const int_plan_t *base,
         sum_y += y[s];
     }
 
-    /* Y approaching 1 is the junction approaching capacity, where Webster's
-     * cycle goes to infinity and the formula stops meaning anything. Refuse
-     * rather than emit an absurd plan and quietly compare against it. */
+    /* Near Y = 1 the cycle goes to infinity; refuse rather than compare against an
+     * absurd plan. */
     if (sum_y <= 0.0 || sum_y >= 0.90) {
         return 0;
     }
 
-    /* Lost time: everything in a cycle during which no car crosses the line.
-     * In this plant that is the startup delay at each green, plus the whole
-     * of the yellow, the all-red and the pre-green, because city.c discharges
-     * only on a green. */
+    /* Everything with no car crossing: startup delay per green, plus yellow,
+     * all-red and pre-green, since city.c only discharges on green. */
     lost_s = (double)base->n_stages
            * ((double)startup_lost_ms + base->yellow_ms + base->all_red_ms
               + base->pregreen_ms) / 1000.0;
@@ -185,19 +151,9 @@ static int webster_retime(webster_t *w, const int_plan_t *base,
         }
         g_ms = (uint32_t)disp_ms;
 
-        /* Two floors, both of which a traffic engineer applies by hand after
-         * the formula has spoken.
-         *
-         * The practical minimum first. Webster splits in proportion to y, and
-         * on an approach with almost no traffic that produces a green of
-         * about a second - arithmetically optimal and useless, because a
-         * green shorter than the startup loss plus one headway cannot clear
-         * the single car that is waiting, so that car waits another whole
-         * cycle. Leaving it unclamped is what gave the T junction's stem a
-         * 1.3 s green and a 74 s worst case.
-         *
-         * Then the pedestrian phase, which has to fit inside the green that
-         * serves it. */
+        /* Floors an engineer applies after the formula: a practical minimum green
+         * (an unclamped split gave the T stem 1.3 s and a 74 s worst case, since it
+         * could not clear even one car), then the pedestrian phase. */
         if (g_ms < INT_MIN_GREEN_MS) {
             g_ms = INT_MIN_GREEN_MS;
         }
@@ -218,9 +174,7 @@ static int webster_retime(webster_t *w, const int_plan_t *base,
         w->stages[s].skippable    = 0u;          /* and nothing is skipped */
     }
 
-    /* Report the cycle the plan actually runs, not the one the formula asked
-     * for. Clamping a green lengthens the cycle, and quoting Webster's C next
-     * to a plan that does not run it would be quoting the wrong number. */
+    /* The cycle the plan actually runs, after clamping. */
     w->cycle_ms = 0u;
     for (s = 0u; s < base->n_stages; s++) {
         w->cycle_ms += (uint32_t)w->stages[s].min_green_ms
@@ -274,7 +228,7 @@ static result_t run_case(const int_plan_t *plan, const uint32_t *rates,
     return r;
 }
 
-/* Several seeds, because one run of a random arrival process is an anecdote. */
+/* One run of a random arrival process is an anecdote. */
 #define SEEDS 5u
 
 static result_t run_seeds(const int_plan_t *plan, const uint32_t *rates,
@@ -311,9 +265,7 @@ static result_t run_seeds(const int_plan_t *plan, const uint32_t *rates,
     return out;
 }
 
-/* A junction that ends the run with a queue this long never reached a steady
- * state, so its mean delay is a number about the length of the run rather
- * than about the controller. Say so rather than printing it quietly. */
+/* Past this the run never reached steady state, and says so. */
 #define OVER_CAPACITY_BACKLOG 20u
 
 static void print_delay(result_t r)
@@ -379,9 +331,8 @@ static int run_level(const int_plan_t *base_fixed, const int_plan_t *base_act,
     naive = run_seeds(base_fixed, rates, ped_per_min, minutes);
     act   = run_seeds(base_act,   rates, ped_per_min, minutes);
 
-    /* Retimed from the same headway and startup loss the plant actually
-     * uses, so the baseline is not being handed worse information than the
-     * controller it is being compared against. */
+    /* Same headway and startup loss as the plant, so the baseline is not handed
+     * worse information than the controller. */
     have_w = webster_retime(&w, base_act, rates, 800u, 500u);
     if (have_w) {
         web = run_seeds(&w.plan, rates, ped_per_min, minutes);
@@ -431,9 +382,9 @@ static int mode_delay(uint32_t minutes)
         for (g = 0u; g < SEM_MAX_GROUPS; g++) {
             rates[g] = 0u;
         }
-        rates[0] = 18u;             /* east  */
-        rates[1] = 18u;             /* west  */
-        rates[2] = stem[i];         /* the stem */
+        rates[0] = 18u;
+        rates[1] = 18u;
+        rates[2] = stem[i];
 
         sprintf(label, "%u", (unsigned)stem[i]);
         ok = run_level(&plan_tee_fixed, &plan_tee, rates, 1u,
@@ -444,24 +395,12 @@ static int mode_delay(uint32_t minutes)
     return ok ? 0 : 1;
 }
 
-/* ------------------------------------------------------------------------ */
-/* regression guard                                                         */
-/* ------------------------------------------------------------------------ */
+/* ---- regression guard ---------------------------------------------------- */
 
-/* The delay figures are the project's headline claim, and nothing was
- * stopping a refactor from quietly costing twenty percent of them. The test
- * suite checks that the controller is correct; correctness does not notice a
- * green that got shorter.
- *
- * These baselines were measured, not chosen. Re-measure them with
- * "sem_sim --baseline", which prints this table ready to paste - and when
- * you do, say in the commit message why the numbers moved. A baseline
- * updated without an explanation is a regression with a commit on top of it.
- *
- * The run is deterministic: fixed seeds, fixed arrival stream, integer
- * arithmetic throughout. So the tolerance is not for noise, it is the width
- * of the change the guard is prepared to let through silently.
- */
+/* The delay figures are the headline claim, and the tests check correctness,
+ * not a green that got shorter. Baselines were measured: re-measure with
+ * "sem_sim --baseline" and say in the commit why they moved. The run is
+ * deterministic, so the tolerance is not for noise. */
 #define CHECK_MINUTES 5u
 #define CHECK_TOL_PCT 8
 
@@ -531,9 +470,8 @@ static int mode_check(int print_baseline)
             printf("   WORSE\n");
             bad++;
         } else if (delta_pct < -CHECK_TOL_PCT) {
-            /* Faster is not automatically fine. A delay that dropped by a
-             * quarter without anyone trying usually means an interval got
-             * shorter, and the intervals are the safety argument. */
+            /* An unexplained improvement usually means an interval got shorter, and the
+             * intervals are the safety argument. */
             printf("   BETTER - check nothing got shorter than it should be\n");
             bad++;
         } else {
@@ -556,9 +494,7 @@ static int mode_check(int print_baseline)
     return bad == 0 ? 0 : 1;
 }
 
-/* ------------------------------------------------------------------------ */
-/* timeline                                                                 */
-/* ------------------------------------------------------------------------ */
+/* ---- timeline ------------------------------------------------------------ */
 
 static int mode_timeline(const int_plan_t *plan, uint32_t seconds)
 {
@@ -656,9 +592,7 @@ static int mode_timeline(const int_plan_t *plan, uint32_t seconds)
     return 0;
 }
 
-/* ------------------------------------------------------------------------ */
-/* fault injection                                                          */
-/* ------------------------------------------------------------------------ */
+/* ---- fault injection ----------------------------------------------------- */
 
 typedef enum {
     INJ_CONFLICT = 0,
@@ -721,7 +655,6 @@ static int mode_fault(const char *kind)
 
         now += TICK_MS;
 
-        /* The field, as the monitor will see it. */
         switch (inj) {
         case INJ_CONFLICT:
             if (now > 10000u) {
@@ -795,7 +728,6 @@ static int mode_fault(const char *kind)
         printf("  %6.2fs  broadcast: %s\n", now / 1000.0, frame);
     }
 
-    /* And it stays there. */
     for (g = 0u; g < 200u; g++) {
         now += TICK_MS;
         snapshot(&s, readback);
@@ -807,9 +739,7 @@ static int mode_fault(const char *kind)
     return 0;
 }
 
-/* ------------------------------------------------------------------------ */
-/* csv                                                                      */
-/* ------------------------------------------------------------------------ */
+/* ---- csv ----------------------------------------------------------------- */
 
 static int mode_csv(const int_plan_t *plan, uint32_t seconds)
 {
@@ -860,9 +790,7 @@ static int mode_csv(const int_plan_t *plan, uint32_t seconds)
     return 0;
 }
 
-/* ------------------------------------------------------------------------ */
-/* real time, real socket                                                   */
-/* ------------------------------------------------------------------------ */
+/* ---- real time, real socket ---------------------------------------------- */
 
 static int mode_broadcast(const int_plan_t *plan, const char *addr, int port,
                           uint32_t seconds, int quiet)
@@ -907,9 +835,7 @@ static int mode_broadcast(const int_plan_t *plan, const char *addr, int port,
     while ((uint32_t)(udp_now_ms() - start) < seconds * 1000u) {
         uint32_t now = udp_now_ms();
 
-        /* Catch the simulation up to the wall clock. A laptop scheduler will
-         * not hand this loop a tick every 10 ms, so it takes as many as it
-         * owes rather than drifting. */
+        /* Take every tick owed, rather than drift behind a laptop scheduler. */
         while ((uint32_t)(now - last_tick) >= TICK_MS) {
             city_tick(&city, &s, TICK_MS);
             sim_ms += TICK_MS;
@@ -918,7 +844,7 @@ static int mode_broadcast(const int_plan_t *plan, const char *addr, int port,
             last_tick += TICK_MS;
         }
 
-        /* 10 Hz, the same rate the node sends at. */
+        /* 10 Hz, as the node sends. */
         if ((uint32_t)(now - last_send) >= 100u) {
             last_send = now;
             for (g = 0u; g < plan->n_groups; g++) {
@@ -944,7 +870,7 @@ static int mode_broadcast(const int_plan_t *plan, const char *addr, int port,
     return 0;
 }
 
-/* ------------------------------------------------------------------------ */
+/* -------------------------------------------------------------------------- */
 
 static const int_plan_t *plan_by_name(const char *name)
 {
@@ -1013,8 +939,7 @@ int main(int argc, char **argv)
         }
     }
 
-    /* Whatever the mode, the plan is checked before it is run. A semaphore
-     * that cannot verify its own configuration has nothing useful to say. */
+    /* The plan is checked before it is run, whatever the mode. */
     {
         char err[64];
         if (!intersection_plan_check(plan, err, (int)sizeof(err))) {

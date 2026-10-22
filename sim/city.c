@@ -6,9 +6,7 @@ static uint32_t rnd(city_t *c)
     return c->seed >> 8;
 }
 
-/* True with probability per_min * dt / one minute. At a 10 ms tick and thirty
- * cars a minute that is one chance in two hundred per tick, which is close
- * enough to Poisson for a queue this short. */
+/* Bernoulli per tick, close enough to Poisson for a queue this short. */
 static int arrives(city_t *c, uint32_t per_min, uint32_t dt_ms)
 {
     uint32_t p_ppm;
@@ -102,9 +100,8 @@ void city_tick(city_t *c, semaphore_t *s, uint32_t dt_ms)
     }
 
     /* --- detectors ------------------------------------------------------- */
-    /* Presence, not a pulse. A stop-line detector with a car sitting on it
-     * reports continuously, and that is what holds a green open for a queue
-     * that is still discharging. */
+    /* Presence, not a pulse: that is what holds a green open for a queue still
+     * discharging. */
     for (g = 0u; g < p->n_groups; g++) {
         if (c->count[g] > 0u) {
             call = (uint16_t)(call | (uint16_t)(1u << g));

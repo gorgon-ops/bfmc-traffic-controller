@@ -3,19 +3,17 @@
 
 #include <string.h>
 
-/* Room for about a dozen frames. The queue exists to absorb the moment when
- * four heads are encoded in the same millisecond, not to buffer an outage. */
+/* About a dozen frames: absorbs four heads encoded at once, not an outage. */
 #define TXQ_SIZE 512u
 
 static volatile uint8_t  txq[TXQ_SIZE];
-static volatile uint16_t txq_head;      /* next byte to send      */
-static volatile uint16_t txq_tail;      /* next free slot         */
+static volatile uint16_t txq_head;
+static volatile uint16_t txq_tail;
 static volatile uint8_t  tx_busy;
 static volatile uint32_t n_sent;
 static volatile uint32_t n_dropped;
 
-/* The chunk currently in flight. Contiguous, so a frame that wraps the ring
- * goes out as two transfers rather than one scrambled one. */
+/* Contiguous, so a frame that wraps the ring goes out as two transfers. */
 static uint8_t tx_chunk[64];
 
 static uint16_t txq_used(void)
@@ -68,8 +66,7 @@ int esp_link_send(const char *buf, int len)
         return 0;
     }
 
-    /* One slot is always left empty so head == tail means empty rather than
-     * ambiguously full. */
+    /* One slot stays empty so head == tail is unambiguous. */
     free_space = (uint16_t)(TXQ_SIZE - 1u - txq_used());
     if ((uint16_t)(len + 1) > free_space) {
         n_dropped++;

@@ -7,7 +7,7 @@ typedef struct {
     uint16_t      pin;
 } pin_t;
 
-/* Index by [group][0=red, 1=yellow, 2=green]. The order matters only here. */
+/* [group][0=red, 1=yellow, 2=green] */
 static const pin_t veh_pins[BOARD_N_GROUPS][3] = {
     { { GPIOC, GPIO_PIN_0  }, { GPIOC, GPIO_PIN_1  }, { GPIOC, GPIO_PIN_2  } },
     { { GPIOC, GPIO_PIN_3  }, { GPIOC, GPIO_PIN_4  }, { GPIOC, GPIO_PIN_5  } },
@@ -15,7 +15,6 @@ static const pin_t veh_pins[BOARD_N_GROUPS][3] = {
     { { GPIOC, GPIO_PIN_9  }, { GPIOC, GPIO_PIN_10 }, { GPIOC, GPIO_PIN_11 } }
 };
 
-/* Pedestrian heads have no yellow. */
 static const pin_t ped_pins[BOARD_N_PEDS][2] = {
     { { GPIOB, GPIO_PIN_0 }, { GPIOB, GPIO_PIN_1  } },
     { { GPIOB, GPIO_PIN_2 }, { GPIOB, GPIO_PIN_10 } }
@@ -35,8 +34,7 @@ void lamp_gpio_init(void)
 {
     uint8_t g;
 
-    /* Everything off before the supply comes up, so the first thing the heads
-     * do is nothing rather than whatever the reset state of the port was. */
+    /* Everything off before the supply comes up. */
     for (g = 0u; g < BOARD_N_GROUPS; g++) {
         lamp_gpio_write(g, 0u);
     }

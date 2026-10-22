@@ -1,16 +1,13 @@
 #include "intersection.h"
 
-/* ------------------------------------------------------------------------ */
-/* small helpers                                                            */
-/* ------------------------------------------------------------------------ */
+/* ---- small helpers ------------------------------------------------------- */
 
 static uint32_t remain(uint32_t target, uint32_t t)
 {
     return (t >= target) ? 0u : (target - t);
 }
 
-/* No snprintf. This runs at boot on the target, and pulling the whole of stdio
- * in for one diagnostic string is not a trade worth making. */
+/* No snprintf: not worth pulling in stdio for one boot-time string. */
 static void err_set(char *e, int cap, const char *msg, int idx)
 {
     int i = 0;
@@ -33,9 +30,7 @@ static void err_set(char *e, int cap, const char *msg, int idx)
     e[i] = '\0';
 }
 
-/* ------------------------------------------------------------------------ */
-/* plan validation                                                          */
-/* ------------------------------------------------------------------------ */
+/* ---- plan validation ----------------------------------------------------- */
 
 int intersection_plan_check(const int_plan_t *p, char *err, int cap)
 {
@@ -72,9 +67,8 @@ int intersection_plan_check(const int_plan_t *p, char *err, int cap)
         all_bits = (uint16_t)(all_bits | (uint16_t)(1u << i));
     }
 
-    /* The conflict matrix. An asymmetric one is the dangerous kind of typo:
-     * it reads as "A conflicts with B" in one direction only, so half the
-     * checks that should fire silently do not. */
+    /* An asymmetric matrix is the dangerous typo: half the checks silently do not
+     * fire. */
     for (i = 0u; i < p->n_groups; i++) {
         if (p->conflict[i] & (uint16_t)(1u << i)) {
             err_set(err, cap, "group conflicts with itself", i);
@@ -94,8 +88,7 @@ int intersection_plan_check(const int_plan_t *p, char *err, int cap)
         }
     }
 
-    /* Clearances. These are the floors the monitor enforces; a plan that sits
-     * below them would trip its own monitor on the first cycle. */
+    /* Below the monitor's floors the plan would trip its own monitor. */
     if (p->yellow_ms < MON_MIN_YELLOW_MS) {
         err_set(err, cap, "yellow below the monitor floor", -1);
         return 0;
@@ -121,9 +114,8 @@ int intersection_plan_check(const int_plan_t *p, char *err, int cap)
             return 0;
         }
         if (st->ext_ms == 0u && st->max_green_ms != st->min_green_ms) {
-            /* A stage with no extension can never reach its maximum, so a
-             * maximum above the minimum is a statement about behaviour that
-             * will not happen. Usually it means an extension was forgotten. */
+            /* Without an extension the maximum is unreachable - usually a forgotten
+             * extension. */
             err_set(err, cap, "stage has a max green it can never reach", s);
             return 0;
         }
@@ -151,10 +143,7 @@ int intersection_plan_check(const int_plan_t *p, char *err, int cap)
                 err_set(err, cap, "stage walks a crossing across its own green", s);
                 return 0;
             }
-            /* Walk plus clearance has to finish inside the minimum green.
-             * Anything longer and a pedestrian can still be in the road when
-             * the conflicting approach is released: the yellow and all-red
-             * that follow are the vehicle clearance, not the walker one. */
+            /* The yellow and all-red that follow clear vehicles, not walkers. */
             if ((uint32_t)p->ped_walk_ms + (uint32_t)p->ped_clear_ms
                     > (uint32_t)st->min_green_ms) {
                 err_set(err, cap, "crossing outlasts the green that serves it", s);
@@ -173,9 +162,7 @@ int intersection_plan_check(const int_plan_t *p, char *err, int cap)
     return 1;
 }
 
-/* ------------------------------------------------------------------------ */
-/* lifecycle                                                                */
-/* ------------------------------------------------------------------------ */
+/* ---- lifecycle ----------------------------------------------------------- */
 
 static void enter(intersection_t *ix, int_state_t s)
 {
@@ -201,31 +188,16 @@ static uint8_t next_stage(const intersection_t *ix)
         }
     }
 
-    /* Every stage is skippable and nothing is calling. Advance anyway, which
-     * degrades the plan to plain fixed-time round-robin. That matters more
-     * than it looks: it means a detector that has failed open costs its
-     * approach the actuation and nothing else. An approach whose green
-     * depends on a sensor that has died is an approach that never goes
-     * green. */
+    /* Nothing calling and every stage skippable: degrade to round-robin, so a
+     * detector failed open costs its approach the actuation and nothing else. */
     return (uint8_t)((ix->stage + 1u) % p->n_stages);
 }
 
-/* Rest in green.
+/* Rest in green when the next stage would be this one again: cycling through
+ * yellow, all-red and pre-green just to return here stops a car for nobody.
  *
- * When the stage that would run next is the stage already running - every
- * other stage skippable, nothing calling on any of them - terminating the
- * green buys a yellow, an all-red and a pre-green and then returns to exactly
- * the indication it started from. On the main road of the T junction that is
- * six seconds of stopping a car that had a green, for nobody.
- *
- * So the green simply stays. It ends on the tick something else calls, which
- * is as fast as the machine can respond at all.
- *
- * Two things must not be rested through. A pedestrian call for this stage
- * needs a fresh green to start its walk from, because the walk is timed from
- * the green onset - resting would leave the button pressed and the crossing
- * dark forever. And a recall crossing has the same problem without anybody
- * pressing anything. */
+ * Not through a pedestrian call or recall, though: the walk is timed from
+ * green onset, so it needs a fresh green. */
 static int resting(const intersection_t *ix)
 {
     const int_stage_t *st = &ix->plan->stages[ix->stage];
@@ -257,9 +229,8 @@ static void enter_green(intersection_t *ix)
                                 : (uint16_t)(st->peds & ix->ped_demand);
     ix->peds_active = walk;
 
-    /* Calls are consumed at the moment the green they asked for begins, not
-     * when the stage was chosen: a button pressed during the pre-green still
-     * gets this crossing rather than waiting a full cycle. */
+    /* Consumed when the green begins, not when the stage was chosen, so a press
+     * during the pre-green is still served. */
     ix->demand     = (uint16_t)(ix->demand & (uint16_t)~st->green);
     ix->ped_demand = (uint16_t)(ix->ped_demand & (uint16_t)~st->peds);
 }
@@ -306,9 +277,7 @@ void intersection_call(intersection_t *ix, uint16_t veh, uint16_t ped)
         return;
     }
 
-    /* Gap-out extension: each actuation moves the end of green to now plus one
-     * headway. A steady stream of cars holds the green; a gap longer than the
-     * extension ends it, whoever is waiting. */
+    /* Gap-out: each actuation moves the end of green to now + one headway. */
     want = ix->t_state_ms + st->ext_ms;
     if (want > st->max_green_ms) {
         want = st->max_green_ms;
@@ -396,9 +365,7 @@ int intersection_reset(intersection_t *ix)
     return intersection_init(ix, ix->plan);
 }
 
-/* ------------------------------------------------------------------------ */
-/* outputs                                                                  */
-/* ------------------------------------------------------------------------ */
+/* ---- outputs ------------------------------------------------------------- */
 
 sig_aspect_t intersection_aspect(const intersection_t *ix, uint8_t group)
 {
@@ -440,9 +407,7 @@ ped_aspect_t intersection_ped_aspect(const intersection_t *ix, uint8_t ped)
         return PED_DARK;
     }
     if (ix->state == INT_FLASH || ix->state == INT_STARTUP) {
-        /* Nothing the crossing head can say here is true. Dark is the
-         * indication that means "judge it yourself", which is what a
-         * flashing-red intersection is asking of everybody. */
+        /* Dark: "judge it yourself", which is what flashing red asks of everybody. */
         return PED_DARK;
     }
     if (ix->state != INT_GREEN || (ix->peds_active & bit) == 0u) {
@@ -473,19 +438,14 @@ uint32_t intersection_ttc_ms(const intersection_t *ix, uint8_t group,
         *exact = 0;
     }
     if (group >= p->n_groups || ix->state == INT_FLASH) {
-        /* Flash has no next change to predict. Saying zero rather than
-         * inventing a number is the point: the frame carries the fault flag
-         * beside it, and a car that sees both knows the countdown is absent
-         * rather than expired. */
+        /* Zero, not an invented number; the fault flag says the countdown is absent. */
         return 0u;
     }
 
     /* Being served right now: the answer is the end of this interval, and
      * nothing beyond it needs walking. */
     if (ix->state == INT_GREEN && (cur->green & bit)) {
-        /* A green that is resting ends whenever somebody else calls, which is
-         * not a time this unit knows. Zero and inexact is the truthful pair:
-         * it can change on the next tick, and no promise is attached. */
+        /* A resting green ends whenever someone else calls: zero and inexact. */
         int fixed = !resting(ix)
                  && ((cur->ext_ms == 0u)
                      || (ix->green_budget_ms >= cur->max_green_ms));
@@ -501,16 +461,14 @@ uint32_t intersection_ttc_ms(const intersection_t *ix, uint8_t group,
         return remain(p->yellow_ms, ix->t_state_ms);
     }
     if (ix->state == INT_PREGREEN && (cur->green & bit)) {
-        /* Still red as far as the protocol is concerned; what changes is the
-         * green underneath the pre-green. */
+        /* Still red to the protocol. */
         if (exact != 0) {
             *exact = 1;
         }
         return remain(p->pregreen_ms, ix->t_state_ms);
     }
 
-    /* Red. Walk the plan forward, taking the earliest branch at every
-     * decision, accumulating minimum durations. */
+    /* Red: walk the plan forward on the earliest branch, summing minimums. */
     switch (ix->state) {
     case INT_STARTUP:
         acc = remain(p->startup_flash_ms, ix->t_state_ms)
@@ -545,11 +503,8 @@ uint32_t intersection_ttc_ms(const intersection_t *ix, uint8_t group,
         const int_stage_t *st = &p->stages[c];
 
         if (st->green & bit) {
-            /* A skippable stage runs when something calls it. For a group
-             * inside it, the thing that calls it is a car on that approach,
-             * so the useful answer is when the green would arrive for a car
-             * calling now, flagged inexact because whether it runs at all is
-             * not the semaphore to know. */
+            /* When the green would arrive for a car calling now, inexact because whether
+             * the stage runs at all is not the semaphore's to know. */
             if (st->skippable) {
                 ex = 0;
             }
@@ -571,8 +526,7 @@ uint32_t intersection_ttc_ms(const intersection_t *ix, uint8_t group,
         acc += (uint32_t)st->min_green_ms + step;
     }
 
-    /* Unreachable for a plan that passed intersection_plan_check(), which
-     * refuses a plan containing a group that is never green. */
+    /* Unreachable: intersection_plan_check() refuses a never-green group. */
     return acc;
 }
 

@@ -1,12 +1,9 @@
 #include "sem_proto.h"
 
-/* ------------------------------------------------------------------------ */
-/* encoding                                                                 */
-/* ------------------------------------------------------------------------ */
+/* ---- encoding ------------------------------------------------------------ */
 
-/* A bounded writer instead of snprintf. The node has no business linking the
- * formatted-output machinery to emit five integers, and a writer that reports
- * overflow rather than truncating is what keeps a half-frame off the wire. */
+/* Not snprintf: no stdio for five integers, and overflow is reported rather
+ * than truncated. */
 typedef struct {
     char *buf;
     int   cap;
@@ -78,9 +75,8 @@ sem_state_t sem_proto_state(sig_aspect_t a)
 
 int sem_proto_encode(char *buf, int cap, const sem_frame_t *f)
 {
-    /* Assembled here and copied out only once it is whole. Writing straight
-     * into the caller's buffer would leave a truncated frame behind on
-     * overflow, and a truncated frame is one a car will still try to parse. */
+    /* Copied out only once whole: a truncated frame is one a car will still try
+     * to parse. */
     char tmp[SEM_PROTO_MAX_FRAME];
     wr_t w;
     int i;
@@ -110,9 +106,7 @@ int sem_proto_encode(char *buf, int cap, const sem_frame_t *f)
     return w.len;
 }
 
-/* ------------------------------------------------------------------------ */
-/* decoding                                                                 */
-/* ------------------------------------------------------------------------ */
+/* ---- decoding ------------------------------------------------------------ */
 
 static int key_match(const char *buf, int len, int pos, const char *key)
 {
@@ -127,17 +121,9 @@ static int key_match(const char *buf, int len, int pos, const char *key)
     return (pos + i < len && buf[pos + i] == '"') ? i : 0;
 }
 
-/* Finds "key" : <digits> anywhere in the frame.
- *
- * This is the only parser of untrusted input in the project - everything else
- * consumes structures this firmware built itself - so it is the one function
- * where "it only ever sees frames this file wrote" is not a safe assumption.
- * Anything at all can arrive on a broadcast socket.
- *
- * Three outcomes, not two. A key that is absent is a different thing from a
- * key that is present and malformed, and collapsing them is what lets a
- * garbage frame decode as a valid one with a default in place of the field
- * that was wrong. */
+/* The only parser of untrusted input in the project. Absent and malformed are
+ * different outcomes: collapsing them lets a garbage frame decode with a
+ * default in place of the bad field. */
 typedef enum {
     FU_ABSENT = 0,
     FU_OK     = 1,
@@ -175,12 +161,8 @@ static fu_result_t find_u32(const char *buf, int len, const char *key,
         while (j < len && buf[j] >= '0' && buf[j] <= '9') {
             uint32_t d = (uint32_t)(buf[j] - '0');
 
-            /* Reject rather than wrap. A value that overflows here used to
-             * come back reduced modulo 2^32, and every range check in the
-             * caller then ran against the reduced number instead of the one
-             * on the wire: "state":4294967298 wrapped to 2 and decoded as a
-             * green. The bound has to be enforced on the digits, because by
-             * the time the value exists the evidence is gone. */
+            /* Reject rather than wrap: "state":4294967298 used to wrap to 2 and decode as
+             * green. */
             if (v > (0xFFFFFFFFu - d) / 10u) {
                 return FU_BAD;
             }
@@ -197,8 +179,6 @@ static fu_result_t find_u32(const char *buf, int len, const char *key,
     return FU_ABSENT;
 }
 
-/* Reads one optional key. Absent leaves the default in place; malformed
- * rejects the whole frame rather than quietly substituting one. */
 static int optional_u32(const char *buf, int len, const char *key,
                         uint32_t dflt, uint32_t *out)
 {
@@ -225,8 +205,7 @@ int sem_proto_decode(const char *buf, int len, sem_frame_t *out)
         return 0;
     }
 
-    /* The two required keys. A frame without them is not a semaphore frame,
-     * whatever else it contains. */
+    /* Without id and state it is not a semaphore frame. */
     if (find_u32(buf, len, "id", &id) != FU_OK) {
         return 0;
     }
@@ -237,12 +216,9 @@ int sem_proto_decode(const char *buf, int len, sem_frame_t *out)
         return 0;
     }
 
-    /* The extensions are optional by design: a frame from an older semaphore,
-     * or from someone else's, still decodes. Optional is not the same as
-     * ignorable, though - a key that is present and unreadable means the
-     * sender and this reader disagree about the format, and guessing at the
-     * rest of the frame on that basis is how a car ends up acting on a
-     * countdown nobody sent. */
+    /* Optional so older frames decode; but present and unreadable means a format
+     * disagreement, and guessing past it is how a car acts on a countdown nobody
+     * sent. */
     if (!optional_u32(buf, len, "ttc_ms", 0u, &ttc) ||
         !optional_u32(buf, len, "exact",  0u, &exact) ||
         !optional_u32(buf, len, "fault",  0u, &fault)) {

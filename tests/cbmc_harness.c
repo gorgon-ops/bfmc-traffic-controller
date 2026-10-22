@@ -1,48 +1,22 @@
-/* cbmc_harness.c - the central invariant, proved rather than sampled.
+/* The central invariant, proved to a bounded depth rather than sampled: CBMC
+ * checks every call sequence up to --unwind ticks, which covers a full stage
+ * transition but not an hour of running. --unwinding-assertions fails rather
+ * than passes if the bound is too small.
  *
- * tests/test_integration.c runs forty simulated minutes of randomised traffic
- * and checks on every tick that no two conflicting approaches are green at
- * once. Nine hundred thousand assertions is good sampling. It is still
- * sampling: it says the property held for the call sequences that happened to
- * be generated, and says nothing about the ones that were not.
- *
- * CBMC unwinds the loop below to a fixed depth and asks an SMT solver whether
- * any assignment of the nondeterministic inputs can reach the assertion. If
- * it cannot, the property holds for *every* call sequence to that depth -
- * every pattern of detector actuations, every pattern of button presses, in
- * every order. That is a different kind of statement from a test passing.
- *
- * Run:
  *     cbmc tests/cbmc_harness.c firmware/common/app/intersection.c \
  *          firmware/common/app/lamps.c firmware/common/app/plans.c \
  *          -I firmware/common/app --unwind 40 --unwinding-assertions \
  *          --function harness_no_conflicting_green
  *
- * or "make prove", which runs each harness below.
- *
- * ---------------------------------------------------------------------------
- * What the depth means, and what it does not
- * ---------------------------------------------------------------------------
- *
- * --unwind N bounds the number of ticks explored. At the default depth the
- * proof covers a few seconds of operation, which is enough to contain a
- * complete stage transition - the manoeuvre where a conflict would occur -
- * but is not a proof about a semaphore that has been running for an hour.
- * Raising the depth costs solver time superlinearly.
- *
- * With --unwinding-assertions CBMC also fails if the loop could run longer
- * than the bound, so a depth that is too small is reported rather than
- * silently passing. A "proved" here is honest about its own scope.
- */
+ * or "make prove". */
 #include <assert.h>
 #include <stdint.h>
 
 #include "intersection.h"
 #include "plans.h"
 
-/* CBMC provides these. The declarations let the file also compile with a
- * normal compiler, which is how "make test" checks it has not rotted -
- * see the stub definitions at the bottom. */
+/* Declared so the file also builds with a normal compiler; see the stubs at the
+ * bottom. */
 uint16_t nondet_uint16(void);
 uint8_t  nondet_uint8(void);
 int      nondet_int(void);
@@ -51,16 +25,8 @@ int      nondet_int(void);
 #define TICK_MS 10u
 #endif
 
-/* --------------------------------------------------------------------- */
-
-/* Two approaches that conflict must never both be in the intersection, where
- * "in" means showing green or showing yellow - a car on a yellow is still
- * inside the box.
- *
- * Note what is nondeterministic: the calls. Every tick, an arbitrary set of
- * detectors and an arbitrary set of buttons may fire. The solver is free to
- * choose the worst possible traffic, including patterns no plausible junction
- * would ever see, and the property has to survive all of them. */
+/* "In the intersection" means green or yellow. The calls are nondeterministic,
+ * so the solver may choose the worst possible traffic. */
 static int occupying(sig_aspect_t a)
 {
     return a == SIG_GREEN || a == SIG_YELLOW;
@@ -76,17 +42,13 @@ void harness_no_conflicting_green(void)
     int t;
     int ok;
 
-    /* Called, not assumed. An earlier version of this wrote
-     * __CPROVER_assume(intersection_init(...)), which under the concrete
-     * build expanded the call away entirely and left the harness driving
-     * uninitialised stack. It asserted nothing and crashed - and the reason
-     * it was found in a second rather than never is the plain main() at the
-     * bottom of this file. */
+    /* Called, not assumed: __CPROVER_assume(intersection_init(...)) expanded the
+     * call away in the concrete build and left the harness on uninitialised
+     * stack. */
     ok = intersection_init(&ix, p);
     assert(ok);
 
     for (t = 0; t < 40; t++) {
-        /* Arbitrary demand, arbitrary buttons, every tick. */
         intersection_call(&ix, nondet_uint16(), nondet_uint16());
         intersection_update(&ix, TICK_MS);
 
@@ -106,12 +68,8 @@ void harness_no_conflicting_green(void)
     }
 }
 
-/* A green is never entered without the pre-green before it, and a green is
- * never left except through the yellow. Stated as: the aspect a group shows
- * can only change in the ways the sequence allows. This is the property the
- * conflict monitor's short-yellow and skipped-yellow checks are there to
- * catch at runtime; proving it here says the controller never generates it in
- * the first place. */
+/* Green only from pre-green, and only left for yellow: the controller never
+ * generates what the monitor's yellow checks catch at runtime. */
 void harness_aspect_sequence(void);
 
 void harness_aspect_sequence(void)
@@ -138,15 +96,13 @@ void harness_aspect_sequence(void)
             sig_aspect_t now = intersection_aspect(&ix, g);
 
             if (now != prev[g]) {
-                /* Green is only ever reached from the pre-green, and only
-                 * ever left for the yellow. */
+                /* Entered only from the pre-green, left only for the yellow. */
                 if (now == SIG_GREEN) {
                     assert(prev[g] == SIG_PREGREEN);
                 }
                 if (prev[g] == SIG_GREEN) {
                     assert(now == SIG_YELLOW);
                 }
-                /* Nothing goes straight from yellow back to green. */
                 if (prev[g] == SIG_YELLOW) {
                     assert(now == SIG_RED);
                 }
@@ -156,14 +112,8 @@ void harness_aspect_sequence(void)
     }
 }
 
-/* The configuration checker, over an arbitrary plan rather than over the
- * plans that happen to be in plans.c.
- *
- * This is the easier proof and the more useful one to have: it says that for
- * *any* stage table and *any* conflict matrix, a plan that
- * intersection_plan_check() accepts cannot contain a stage that greens two
- * conflicting groups. A reviewer does not have to trust that the checker's
- * loops cover the cases - the solver has tried all of them. */
+/* For any stage table and conflict matrix, a plan intersection_plan_check()
+ * accepts cannot green two conflicting groups. */
 void harness_plan_check_rejects_conflicting_stages(void);
 
 void harness_plan_check_rejects_conflicting_stages(void)
@@ -175,7 +125,6 @@ void harness_plan_check_rejects_conflicting_stages(void)
     uint8_t      ids[3];
     uint8_t      s, i, j;
 
-    /* An arbitrary three-group, two-stage plan. */
     for (i = 0u; i < 3u; i++) {
         conflict[i] = nondet_uint16() & 0x7u;
         ids[i] = nondet_uint8();
@@ -208,8 +157,8 @@ void harness_plan_check_rejects_conflicting_stages(void)
     plan.ped_recall       = 0u;
 
     if (intersection_plan_check(&plan, 0, 0)) {
-        /* Accepted. Then no stage may contain a conflicting pair, and the
-         * matrix the acceptance was based on must be symmetric. */
+        /* Accepted, so no stage may hold a conflicting pair and the matrix must be
+         * symmetric. */
         for (s = 0u; s < 2u; s++) {
             for (i = 0u; i < 3u; i++) {
                 if ((stages[s].green & (uint16_t)(1u << i)) == 0u) {
@@ -228,14 +177,10 @@ void harness_plan_check_rejects_conflicting_stages(void)
     }
 }
 
-/* --------------------------------------------------------------------- */
-/* so the file still compiles without CBMC                               */
-/* --------------------------------------------------------------------- */
+/* ---- so the file still compiles without CBMC ----------------------------- */
 
-/* A harness that no longer compiles is a harness nobody notices has stopped
- * being run. "make test" builds this with a normal compiler and executes each
- * one once with fixed inputs, which proves nothing about the property and
- * everything about the harness still matching the code it is checking. */
+/* "make test" runs each harness once with fixed inputs: proves nothing about
+ * the property, only that the harness still matches the code. */
 #ifndef __CPROVER
 
 #include <stdio.h>
@@ -273,4 +218,4 @@ int main(void)
     return 0;
 }
 
-#endif /* __CPROVER */
+#endif

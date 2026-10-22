@@ -1,15 +1,9 @@
 #!/usr/bin/env python3
 """Listen for semaphore broadcasts and print them as a car would see them.
 
-This is the other end of `sem_sim --broadcast` and of the ESP module on the
-node. It is about forty lines because that is genuinely all the car side of
-this protocol is: bind a UDP socket, parse a small JSON object, index it by id.
-
-    python tools/listen.py                 # default port
-    python tools/listen.py --port 5007
-    python tools/listen.py --raw           # one line per datagram
-
-Run it beside `build/host/sem_sim --broadcast` to watch a full cycle arrive.
+python tools/listen.py                 # default port
+python tools/listen.py --port 5007
+python tools/listen.py --raw           # one line per datagram
 """
 
 import argparse
@@ -35,8 +29,7 @@ def main() -> int:
 
     print(f"listening on {args.bind}:{args.port}, ctrl-c to stop\n")
 
-    # Last frame seen per semaphore id, so the table shows the whole
-    # intersection rather than whichever head spoke most recently.
+    # Last frame per id, so the table shows the whole intersection.
     heads: dict[int, dict] = {}
     last_draw = 0.0
 
@@ -62,7 +55,6 @@ def main() -> int:
                 print(f"  unparseable: {line!r}")
                 continue
             if "id" not in frame or "state" not in frame:
-                # The two required keys. Anything else is optional by design.
                 print(f"  not a semaphore frame: {line!r}")
                 continue
             heads[int(frame["id"])] = frame

@@ -49,12 +49,11 @@ mon_fault_t conflict_monitor_update(conflict_monitor_t *m, uint32_t now_ms,
     uint8_t g, h;
 
     if (m->fault != MON_OK) {
-        return m->fault;             /* latched; the first fault is the one */
+        return m->fault;
     }
 
     if (m->started) {
-        /* Unsigned subtraction, so a wrapped millisecond clock is still a
-         * correct interval as long as the gap itself is under 49 days. */
+        /* Wrap-safe unsigned subtraction. */
         if ((uint32_t)(now_ms - m->last_ms) > cfg->max_gap_ms) {
             return trip(m, MON_FAULT_STALL, 0u, 0u, now_ms);
         }
@@ -74,10 +73,8 @@ mon_fault_t conflict_monitor_update(conflict_monitor_t *m, uint32_t now_ms,
     }
 
     /* --- the check the unit exists for ----------------------------------- */
-    /* Ahead of the command comparison on purpose. A green that appeared in
-     * the field without being asked for is both a mismatch and a conflict,
-     * and "two approaches are green at once" is the more useful of the two
-     * things to find in the log afterwards. */
+    /* Ahead of the command comparison: "two approaches green at once" is the more
+     * useful thing to find in the log. */
     for (g = 0u; g < cfg->n_groups; g++) {
         if (!occ[g]) {
             continue;
@@ -96,16 +93,9 @@ mon_fault_t conflict_monitor_update(conflict_monitor_t *m, uint32_t now_ms,
         int was_occ  = lamp_permissive(prev) || lamp_clearing(prev);
 
         if (intent != 0) {
-            /* Commanded and observed are resolved at the same instant, or a
-             * head that is legitimately flashing would disagree with itself
-             * across every blink boundary. That is the whole reason
-             * lamp_bits() takes the clock rather than keeping a phase of its
-             * own.
-             *
-             * What is left after that is the one tick of lag between writing
-             * the lamps and reading them back, which every transition
-             * produces and which the settling window absorbs. A real fault
-             * does not clear itself on the next tick. */
+            /* Both resolved at the same instant, or a flashing head would disagree with
+             * itself at every blink boundary. The remaining one-tick lag is what the
+             * settling window absorbs. */
             if (bits != lamp_bits(intent[g], now_ms)) {
                 if (!m->in_mismatch[g]) {
                     m->in_mismatch[g]       = 1u;
@@ -119,8 +109,7 @@ mon_fault_t conflict_monitor_update(conflict_monitor_t *m, uint32_t now_ms,
             }
         }
 
-        /* Clearance: a group may only be released once every conflicting
-         * group has been out of the intersection for the minimum. */
+        /* Released only once every conflicting group has been out for the minimum. */
         if (lamp_permissive(bits) && !lamp_permissive(prev)) {
             for (h = 0u; h < cfg->n_groups; h++) {
                 if (h == g || !(cfg->conflict[g] & (uint16_t)(1u << h))) {
@@ -146,17 +135,10 @@ mon_fault_t conflict_monitor_update(conflict_monitor_t *m, uint32_t now_ms,
             }
         }
 
-        /* Green to red with nothing in between. A plan missing its yellow
-         * looks exactly like this, and so does a state machine that jumped a
-         * transition.
-         *
-         * The exception is a commanded drop into flash, which is exactly this
-         * transition done on purpose: the intersection is being taken out of
-         * service because something is already wrong, and making it sit
-         * through a yellow first would be holding a known-bad indication up
-         * for another second and a half. Recognising it needs the command,
-         * which is the one place this unit consults intent for something
-         * other than comparing it against the field. */
+        /* Green to red with no yellow - except a commanded drop into flash, which
+         * does this on purpose rather than hold a known-bad indication for another
+         * yellow. That is the one place intent is consulted for anything but the
+         * field comparison. */
         if ((prev & LAMP_G) && (bits & LAMP_R) && !(bits & LAMP_Y)) {
             int to_flash = (intent != 0)
                         && (intent[g] == SIG_FLASH_RED

@@ -39,8 +39,7 @@ int lamp_bits_valid(uint8_t bits)
     case (LAMP_R | LAMP_Y):
         return 1;
     default:
-        /* R+G, Y+G and all three at once are not aspects. A head showing one
-         * of them is telling two approaches different things. */
+        /* R+G, Y+G and all three are not aspects. */
         return 0;
     }
 }
@@ -52,7 +51,7 @@ int lamp_permissive(uint8_t bits)
 
 int lamp_clearing(uint8_t bits)
 {
-    /* Yellow alone. Yellow with red is the pre-green, which permits nothing. */
+    /* Yellow with red is the pre-green, which permits nothing. */
     return (bits & LAMP_Y) != 0u && (bits & LAMP_R) == 0u;
 }
 

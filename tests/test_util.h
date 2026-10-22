@@ -1,9 +1,5 @@
-/** Minimal assertion harness shared by the host test programs.
- *
- * Same shape as the one in the ABS and CAN projects. Everything here is an
- * integer count of milliseconds, so there is no CHECK_NEAR: a timing that is
- * approximately right is a timing that is wrong, and the tick is the tolerance.
- */
+/* No CHECK_NEAR: everything is integer milliseconds, and the tick is the
+ * tolerance. */
 #ifndef TEST_UTIL_H
 #define TEST_UTIL_H
 
@@ -32,7 +28,6 @@ static int g_checks;
         }                                                                    \
     } while (0)
 
-/** @brief Equality with a stated slack, for values quantised by the tick. */
 #define CHECK_WITHIN(a, b, slack)                                            \
     do {                                                                     \
         long _a = (long)(a), _b = (long)(b), _s = (long)(slack);             \
@@ -45,11 +40,10 @@ static int g_checks;
         }                                                                    \
     } while (0)
 
-/** @brief Print the tally and return a process exit code. */
 static int test_report(void)
 {
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }
 
-#endif /* TEST_UTIL_H */
+#endif

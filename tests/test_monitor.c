@@ -1,16 +1,6 @@
-/* test_monitor.c - the supervisor, tested against things the controller would
- * never do.
- *
- * Most of this file feeds the monitor bulb vectors directly rather than
- * running the state machine, because that is the point of the unit: it has to
- * catch an intersection that is showing something no correct controller would
- * have commanded. A monitor tested only against a correct controller is a
- * monitor that has never been tested.
- *
- * The last two tests close the loop - a fault injected into the field readback
- * of a running unit, and a clean unit left running long enough to prove the
- * monitor does not eventually trip on nothing.
- */
+/* Mostly bulb vectors fed straight in: the monitor exists to catch output no
+ * correct controller would command, so testing it against a correct one tests
+ * nothing. The last tests close the loop through a running unit. */
 #include "test_util.h"
 #include "rig.h"
 #include "plans.h"
@@ -24,9 +14,7 @@
 #define Y LAMP_Y
 #define G LAMP_G
 
-/* The four-way conflict matrix, written out again rather than imported: this
- * file is checking the monitor, and a monitor checked against the same array
- * the controller used is only checking that memory works. */
+/* Written out again, not imported from the controller's array. */
 static void mon_setup(conflict_monitor_t *m)
 {
     mon_cfg_t cfg;
@@ -49,8 +37,7 @@ static void mon_setup(conflict_monitor_t *m)
     conflict_monitor_init(m, &cfg);
 }
 
-/* Hold one bulb vector for a while, inspecting every 10 ms the way the node
- * does. Returns the last verdict. */
+/* Inspects every 10 ms, as the node does. Returns the last verdict. */
 static mon_fault_t hold(conflict_monitor_t *m, uint32_t *now, uint32_t ms,
                         uint8_t n, uint8_t e, uint8_t s, uint8_t w)
 {
@@ -68,10 +55,7 @@ static mon_fault_t hold(conflict_monitor_t *m, uint32_t *now, uint32_t ms,
     return f;
 }
 
-/* --------------------------------------------------------------------- */
-
-/* A correct cycle, by hand. If this trips, every other result in the file is
- * meaningless. */
+/* If this trips, nothing else in the file means anything. */
 static void test_a_correct_cycle_passes(void)
 {
     conflict_monitor_t m;
@@ -105,7 +89,7 @@ static void test_conflicting_greens(void)
     CHECK_EQ(m.fault_ms, now);
 }
 
-/* A yellow is not a free pass: a car on it is still inside the box. */
+/* A car on a yellow is still inside the box. */
 static void test_a_green_against_a_conflicting_yellow(void)
 {
     conflict_monitor_t m;
@@ -116,7 +100,6 @@ static void test_a_green_against_a_conflicting_yellow(void)
     CHECK_EQ(hold(&m, &now, 10u, Y, G, R, R), MON_FAULT_CONFLICT);
 }
 
-/* Opposite approaches are not in the matrix, so both green is correct. */
 static void test_compatible_greens_are_not_a_conflict(void)
 {
     conflict_monitor_t m;
@@ -159,8 +142,7 @@ static void test_no_yellow_at_all(void)
     CHECK_EQ(hold(&m, &now, 10u, R, R, R, R), MON_FAULT_SKIPPED_YELLOW);
 }
 
-/* The transition that is allowed to skip the yellow: a commanded drop into
- * flash, because the intersection is already being taken out of service. */
+/* A commanded drop into flash may skip the yellow. */
 static void test_a_drop_into_flash_is_not_a_skipped_yellow(void)
 {
     conflict_monitor_t m;
@@ -206,8 +188,8 @@ static void test_short_all_red(void)
     hold(&m, &now, MON_MIN_ALL_RED_MS - 200u, R, R, R, R);
 
     CHECK_EQ(hold(&m, &now, 10u, R, G, R, G), MON_FAULT_SHORT_CLEARANCE);
-    CHECK_EQ(m.fault_a, G_E);          /* the one released too early */
-    CHECK_EQ(m.fault_b, G_N);          /* the one still being cleared */
+    CHECK_EQ(m.fault_a, G_E);
+    CHECK_EQ(m.fault_b, G_N);
 }
 
 static void test_an_all_red_at_exactly_the_minimum_is_allowed(void)
@@ -239,14 +221,13 @@ static void test_illegal_bulb_combinations(void)
     now = 0u;
     CHECK_EQ(hold(&m, &now, 10u, R, R, R, R|Y|G), MON_FAULT_BAD_ASPECT);
 
-    /* Red and yellow together is the pre-green, and is an aspect. */
+    /* The pre-green is an aspect. */
     mon_setup(&m);
     now = 0u;
     CHECK_EQ(hold(&m, &now, 500u, R|Y, R, R|Y, R), MON_OK);
 }
 
-/* A lamp that is dark when it was told to be red. On the bench this is a
- * blown bulb; in the rack it is usually a connector. */
+/* Dark when told to be red: a blown bulb or a connector. */
 static void test_field_output_that_does_not_match_the_command(void)
 {
     conflict_monitor_t m;
@@ -262,13 +243,12 @@ static void test_field_output_that_does_not_match_the_command(void)
     }
     CHECK_EQ(conflict_monitor_update(&m, now, intent, bits), MON_OK);
 
-    /* One tick of disagreement is the readback lagging the command, and is
-     * not a fault. */
+    /* One tick of lag is not a fault. */
     now += 10u;
-    bits[G_W] = 0u;                    /* the west head has gone dark */
+    bits[G_W] = 0u;
     CHECK_EQ(conflict_monitor_update(&m, now, intent, bits), MON_OK);
 
-    /* It not clearing is. */
+    /* Not clearing is. */
     for (i = 0u; i < (MON_FIELD_GRACE_MS / 10u) - 1u; i++) {
         now += 10u;
         CHECK_EQ(conflict_monitor_update(&m, now, intent, bits), MON_OK);
@@ -279,8 +259,7 @@ static void test_field_output_that_does_not_match_the_command(void)
     CHECK_EQ(m.fault_a, G_W);
 }
 
-/* Flashing is resolved from the clock, so a monitor that used its own idea of
- * the phase would disagree with the controller every half second. */
+/* A monitor with its own flash phase would disagree every half second. */
 static void test_flashing_does_not_look_like_a_mismatch(void)
 {
     conflict_monitor_t m;
@@ -294,7 +273,7 @@ static void test_flashing_does_not_look_like_a_mismatch(void)
     for (g = 0u; g < 4u; g++) {
         intent[g] = SIG_FLASH_RED;
     }
-    for (i = 0u; i < 600u; i++) {      /* six full flash periods */
+    for (i = 0u; i < 600u; i++) {
         now += 10u;
         for (g = 0u; g < 4u; g++) {
             bits[g] = lamp_bits(SIG_FLASH_RED, now);
@@ -303,8 +282,7 @@ static void test_flashing_does_not_look_like_a_mismatch(void)
     }
 }
 
-/* Outputs nobody is checking are outputs nobody is checking, whatever they
- * happen to be showing. */
+/* Unchecked outputs are a fault, whatever they show. */
 static void test_a_controller_that_stops_reporting(void)
 {
     conflict_monitor_t m;
@@ -318,10 +296,10 @@ static void test_a_controller_that_stops_reporting(void)
     }
     hold(&m, &now, 1000u, R, R, R, R);
 
-    now += MON_MAX_GAP_MS;             /* just inside */
+    now += MON_MAX_GAP_MS;
     CHECK_EQ(conflict_monitor_update(&m, now, 0, bits), MON_OK);
 
-    now += MON_MAX_GAP_MS + 10u;       /* and just outside */
+    now += MON_MAX_GAP_MS + 10u;
     CHECK_EQ(conflict_monitor_update(&m, now, 0, bits), MON_FAULT_STALL);
 }
 
@@ -336,7 +314,7 @@ static void test_a_fault_latches_and_keeps_its_first_cause(void)
     CHECK_EQ(hold(&m, &now, 10u, G, G, R, R), MON_FAULT_CONFLICT);
     at = m.fault_ms;
 
-    /* Perfectly innocent output from here on. It changes nothing. */
+    /* Innocent output from here on changes nothing. */
     CHECK_EQ(hold(&m, &now, 30000u, R, R, R, R), MON_FAULT_CONFLICT);
     CHECK_EQ(m.fault_ms, at);
     CHECK_EQ(m.fault_a, G_N);
@@ -346,12 +324,9 @@ static void test_a_fault_latches_and_keeps_its_first_cause(void)
     CHECK_EQ(hold(&m, &now, 1000u, R, R, R, R), MON_OK);
 }
 
-/* --------------------------------------------------------------------- */
-/* through a running unit                                                */
-/* --------------------------------------------------------------------- */
+/* ---- through a running unit ---------------------------------------------- */
 
-/* The failure the controller cannot see on its own: the field shows a green
- * nobody commanded, on an approach that conflicts with the one running. */
+/* A green nobody commanded, conflicting with the running approach. */
 static void test_an_injected_conflict_takes_the_unit_out_of_service(void)
 {
     rig_t r;
@@ -363,7 +338,6 @@ static void test_an_injected_conflict_takes_the_unit_out_of_service(void)
     rig_run_ms(&r, 500u);
     CHECK_EQ(r.fault, MON_OK);
 
-    /* A shorted driver on the east head. */
     for (g = 0u; g < 4u; g++) {
         injected[g] = semaphore_bits(&r.sem, g);
     }
@@ -373,13 +347,12 @@ static void test_an_injected_conflict_takes_the_unit_out_of_service(void)
     rig_tick(&r);
     CHECK_EQ(r.fault, MON_FAULT_CONFLICT);
 
-    /* On the same tick, not the next one. */
+    /* On the same tick. */
     CHECK_EQ(rig_state(&r), INT_FLASH);
     CHECK_EQ(rig_aspect(&r, G_N), SIG_FLASH_RED);
     CHECK_EQ(semaphore_state(&r.sem, G_N), SEM_RED);
 
-    /* And the frame says so, rather than describing a countdown that no
-     * longer means anything. */
+    /* The frame says so instead of a meaningless countdown. */
     {
         sem_frame_t f;
         semaphore_frame_fields(&r.sem, G_N, &f);
@@ -389,15 +362,13 @@ static void test_an_injected_conflict_takes_the_unit_out_of_service(void)
         CHECK_EQ(f.exact, 0);
     }
 
-    /* It stays out of service. Time does not fix a shorted driver, and an
-     * intersection that recovers on its own is one nobody investigates. */
+    /* Latched: an intersection that recovers on its own is never investigated. */
     r.readback = 0;
     rig_run_ms(&r, 60000u);
     CHECK_EQ(rig_state(&r), INT_FLASH);
 }
 
-/* A dead lamp, which is the failure a unit with no readback cannot see at all.
- * This is the argument for wiring the readback. */
+/* Invisible without the readback - the argument for wiring it. */
 static void test_an_injected_dead_lamp(void)
 {
     rig_t r;
@@ -421,9 +392,8 @@ static void test_an_injected_dead_lamp(void)
     CHECK_EQ(rig_state(&r), INT_FLASH);
 }
 
-/* Half an hour of correct operation with traffic on every approach. The
- * monitor has to be quiet through all of it, or it is an alarm nobody will
- * believe when it does go off. */
+/* Half an hour clean: a monitor that ever trips on nothing will not be
+ * believed. */
 static void test_a_long_clean_run_does_not_trip(void)
 {
     rig_t r;
