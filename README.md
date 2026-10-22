@@ -228,7 +228,7 @@ be braking hard for a pedestrian doll it has just detected.
 
 ---
 
-## What is not done
+## Limitations
 
 - **The monitor shares a core with the controller.** In a cabinet it is a
   separate board on separate power. Here a controller that hard-faults with a
