@@ -1,10 +1,6 @@
 name: ci
 
-# Everything in this file runs on a push. The point is that a reviewer can
-# confirm the numbers in the README in three seconds by looking at a badge,
-# rather than taking 925,000 assertions on faith from someone's laptop.
-#
-# The jobs are split so a failure says which claim broke, not just "ci red".
+# Split into jobs so a failure says which claim broke.
 
 on:
   push:
